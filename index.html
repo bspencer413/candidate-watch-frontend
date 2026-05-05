@@ -31,7 +31,7 @@
       --cw-accent: #1B3A57;
       --cw-accent-2: #B8941F;
       --cw-bg-gradient: linear-gradient(135deg, #0D1B2A 0%, #1B3A57 50%, #2A4A6B 100%);
-      --cw-bg-overlay: rgba(0,0,0,0.50);
+      --cw-bg-overlay: rgba(0,0,0,0.20);
       --cw-signin-blur: blur(2px);
       --cw-card-bg: rgba(0,0,0,0.55);
       --cw-card-border: rgba(255,255,255,0.15);
@@ -69,7 +69,7 @@ const { useState, useEffect } = React;
 
 // == Constants ================================================================
 const APP_NAME = 'Candidate Watch';
-const APP_VERSION = '0.2.2';
+const APP_VERSION = '0.3.0';
 const API_BASE = 'https://candidate-watch-backend.onrender.com';
 const CW_REPO = 'https://raw.githubusercontent.com/bspencer413/candidate-watch-frontend/main';
 const SIGNIN_BG = CW_REPO + '/signin-background.jpg';
@@ -187,7 +187,7 @@ const CardPageHeader = ({ title, subtitle }) => (
 );
 
 const PageWrapper = ({ children }) => (
-  <div className="page-bg">
+  <div className="page-bg" style={{ backgroundImage: 'url(' + SIGNIN_BG + ')', backgroundSize: 'cover', backgroundPosition: 'center', backgroundAttachment: 'fixed' }}>
     <div style={{ position: 'relative', zIndex: 2, paddingBottom: 'calc(5.5rem + env(safe-area-inset-bottom))' }}>{children}</div>
   </div>
 );
@@ -328,7 +328,7 @@ function App() {
   }, []);
 
   useEffect(() => {
-    if (autoOpenId && page === 'mycandidates' && watchlist.length > 0) {
+    if (autoOpenId && (page === 'mycandidates' || page === 'watchlist') && watchlist.length > 0) {
       const wItem = watchlist.find(w => w.id === autoOpenId);
       if (wItem) { openMyCandidatesDrawer(wItem); setAutoOpenId(null); }
     }
@@ -358,7 +358,7 @@ function App() {
   };
   const viewAlert = (n) => {
     const wItem = watchlist.find(w => w.id === n.watchlist_id);
-    if (wItem) { setPage('mycandidates'); setAutoOpenId(wItem.id); }
+    if (wItem) { setPage('watchlist'); setAutoOpenId(wItem.id); }
   };
   const doAuth = async (authMode) => {
     if (!email || !password) return;
@@ -456,7 +456,7 @@ function App() {
           if (snap) saveStatSnapshot(newId, snap);
         }
       }
-      clearSearch(); setPage('mycandidates');
+      clearSearch(); setPage('watchlist');
       if (newId) setAutoOpenId(newId);
     } catch(e) { alert('Error: ' + e.message); }
     finally { setLoadingSave(false); }
@@ -480,16 +480,17 @@ function App() {
     setDrawerData(prev => prev ? Object.assign({}, prev, { wiki: wiki, loading: false }) : null);
   };
 
-  // My Candidates drawer (full): bio + StatPanel from snapshot (or live fallback)
+  // My Candidates drawer: tap = fresh FEC fetch (canonical "one-time search" pattern)
   const openMyCandidatesDrawer = async (wItem) => {
     const meta = parseMeta(wItem.location);
-    let snapshot = getStatSnapshot(wItem.id);
+    let snapshot = getStatSnapshot(wItem.id); // shown immediately while fresh fetch loads
     setDrawerData({ mode: 'mycandidates', name: wItem.name, watchlistId: wItem.id, meta: meta, wiki: null, snapshot: snapshot, loading: true });
     const wiki = await fetchWikiBio(wItem.name).catch(() => null);
-    if (!snapshot && meta && meta.fecId) {
+    // Always fetch fresh FEC data on tap
+    if (meta && meta.fecId) {
       const profile = await fetchFecCandidate(meta.fecId).catch(() => null);
-      const snap = buildSnapshot(profile, null);
-      if (snap) { saveStatSnapshot(wItem.id, snap); snapshot = snap; }
+      const fresh = buildSnapshot(profile, null);
+      if (fresh) { saveStatSnapshot(wItem.id, fresh); snapshot = fresh; }
     }
     // For incumbents, fetch congress data lazily and merge into snapshot
     if (snapshot && meta && meta.incumbent && meta.bioguideId) {
@@ -521,6 +522,23 @@ function App() {
       setDrawerData(prev => prev ? Object.assign({}, prev, { mode: 'mycandidates', snapshot: newSnap }) : null);
     } catch(e) { alert('Error: ' + e.message); }
     finally { setCheckingStats(false); }
+  };
+
+  // Promote a watchlist item to My Candidates
+  const promoteToMyCandidates = async () => {
+    if (!drawerData || !drawerData.watchlistId) return;
+    try {
+      const token = localStorage.getItem('token');
+      const r = await fetch(API_BASE + '/watchlist/' + drawerData.watchlistId + '/promote', {
+        method: 'POST',
+        headers: { 'Authorization': 'Bearer ' + token }
+      });
+      if (!r.ok) throw new Error('Failed');
+      // Update local watchlist state and drawer
+      setWatchlist(prev => prev.map(w => w.id === drawerData.watchlistId ? Object.assign({}, w, { in_my_candidates: true }) : w));
+      setDrawerData(prev => prev ? Object.assign({}, prev, { promoted: true }) : null);
+      showToast('Saved to My Candidates');
+    } catch(e) { alert('Error: ' + e.message); }
   };
 
   const unreadCount = notifications.length;
@@ -558,7 +576,7 @@ function App() {
           {wiki && wiki.extract && <p className="text-gray-100 text-xl leading-relaxed mb-3">{wiki.extract}</p>}
           {showSaveButton && (
             <div className="space-y-2">
-              {alreadySaved ? <p className="text-green-300 text-xl text-center font-bold">Already saved</p> : <button onClick={saveCandidate} disabled={loadingSave || !candidate} className="w-full py-4 text-white rounded-xl font-bold text-2xl flex items-center justify-center gap-2 disabled:opacity-50" style={{ backgroundColor: 'var(--cw-accent)' }}><PlusIcon /> {loadingSave ? 'Saving...' : 'Save Candidate'}</button>}
+              {alreadySaved ? <p className="text-green-300 text-xl text-center font-bold">Already on watchlist</p> : <button onClick={saveCandidate} disabled={loadingSave || !candidate} className="w-full py-4 text-white rounded-xl font-bold text-2xl flex items-center justify-center gap-2 disabled:opacity-50" style={{ backgroundColor: 'var(--cw-accent)' }}><PlusIcon /> {loadingSave ? 'Saving...' : 'Save to Watchlist'}</button>}
               {!candidate && <p className="text-yellow-300 text-base text-center">No FEC match. Pick a different name or check spelling.</p>}
               <button onClick={clearSearch} className="w-full py-3 bg-white/10 border border-white/20 text-white/80 rounded-xl text-xl text-center">Clear Search</button>
             </div>
@@ -611,6 +629,18 @@ function App() {
                 )}
                 {mode === 'mycandidates' && <StatPanel snapshot={snapshot} />}
                 {mode === 'mycandidates' && snapshot && snapshot.capturedAt && (<p className="text-white/40 text-sm text-center mt-3">Last updated {new Date(snapshot.capturedAt).toLocaleString()}</p>)}
+                {mode === 'mycandidates' && drawerData.watchlistId && (() => {
+                  const wItem = watchlist.find(w => w.id === drawerData.watchlistId);
+                  const isPromoted = wItem && wItem.in_my_candidates;
+                  if (isPromoted) {
+                    return <p className="text-green-300 text-base text-center mt-3 italic">In My Candidates</p>;
+                  }
+                  return (
+                    <button onClick={promoteToMyCandidates} className="w-full py-4 text-white rounded-xl font-bold text-2xl flex items-center justify-center gap-2 mt-3" style={{ backgroundColor: 'var(--cw-accent-2)' }}>
+                      <PlusIcon /> Save to My Candidates
+                    </button>
+                  );
+                })()}
               </>
             )}
             <button onClick={() => setDrawerData(null)} className="w-full py-4 bg-white/10 border border-white/20 text-white rounded-xl text-xl mt-4">Close</button>
@@ -622,11 +652,10 @@ function App() {
 
   if (page === 'login') {
     return (
-      <div className="page-bg" style={{ display: 'flex', flexDirection: 'column', minHeight: '100dvh', backgroundImage: 'url(' + SIGNIN_BG + ')', backgroundSize: 'cover', backgroundPosition: 'center' }}>
-        <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 1 }} />
+      <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100dvh', width: '100%', backgroundImage: 'url(' + SIGNIN_BG + ')', backgroundSize: 'cover', backgroundPosition: 'center', position: 'relative' }}>
         <div style={{ position: 'relative', zIndex: 2, display: 'flex', flexDirection: 'column', alignItems: 'stretch', flex: 1, justifyContent: 'center' }}>
           <div style={{ textAlign: 'center', padding: '2rem 1.5rem 1.5rem' }}>
-            <h1 style={{ color: '#fff', fontSize: isPhone ? '4.5rem' : '6.5rem', fontWeight: 900, fontFamily: 'var(--cw-display-font)', letterSpacing: '0.04em', lineHeight: 0.9, WebkitTextStroke: '2px #fff', textShadow: '0 4px 20px rgba(0,0,0,0.95), 0 2px 8px rgba(0,0,0,0.9)', margin: 0 }}>CANDIDATE<br/>WATCH</h1>
+            <h1 style={{ color: '#fff', fontSize: isPhone ? '3.5rem' : '5.5rem', fontWeight: 900, fontFamily: 'var(--cw-display-font)', letterSpacing: '0.04em', lineHeight: 0.9, WebkitTextStroke: '2px #fff', textShadow: '0 4px 20px rgba(0,0,0,0.95), 0 2px 8px rgba(0,0,0,0.9)', margin: 0 }}>CANDIDATE<br/>WATCH</h1>
             <p style={{ color: '#fff', fontSize: isPhone ? '1.6rem' : '2rem', fontFamily: 'var(--cw-display-font)', letterSpacing: '0.04em', lineHeight: 1.15, textShadow: '0 2px 8px rgba(0,0,0,0.9)', marginTop: '1.25rem' }}>Track Senate Candidates<br/>Across the Country</p>
           </div>
           <div style={{ paddingLeft: '1.5rem', paddingRight: '1.5rem' }}>
@@ -660,7 +689,7 @@ function App() {
         {page === 'search' && (
           <div className="space-y-3" style={{ paddingTop: PT }}>
             <div className="flex flex-col items-center" style={{ height: PT, marginTop: '-' + PT, paddingTop: '4rem', paddingBottom: '1.5rem', pointerEvents: 'none' }}>
-              <h1 className="text-white font-black text-center" style={{ fontSize: isPhone ? '5rem' : '7rem', fontFamily: 'var(--cw-display-font)', letterSpacing: '0.04em', lineHeight: 0.9, textShadow: '0 4px 16px rgba(0,0,0,0.9)' }}>CANDIDATE<br/>WATCH</h1>
+              <h1 className="text-white font-black text-center" style={{ fontSize: isPhone ? '4rem' : '6rem', fontFamily: 'var(--cw-display-font)', letterSpacing: '0.04em', lineHeight: 0.9, textShadow: '0 4px 16px rgba(0,0,0,0.9)' }}>CANDIDATE<br/>WATCH</h1>
               <p className="text-white text-center" style={{ fontSize: isPhone ? '1.8rem' : '2.4rem', fontFamily: 'var(--cw-display-font)', letterSpacing: '0.04em', lineHeight: 1.05, textShadow: '0 2px 8px rgba(0,0,0,0.9)', marginTop: '1rem' }}>Who Are You<br/>Watching?</p>
             </div>
             <div className={cardClass} style={Object.assign({}, cardStyle, { overflowY: 'auto', maxHeight: 'calc(100dvh - ' + PT + ' - 6rem)' })}>
@@ -720,11 +749,19 @@ function App() {
         {page === 'mycandidates' && (
           <div className="space-y-3" style={{ paddingTop: '1rem' }}>
             <div className={cardClass} style={cardStyle}>
-              <CardPageHeader title="My Candidates" subtitle="Your saved candidates and finance data" />
-              {watchlist.length === 0 ? (<div className="text-center py-6"><p className="text-gray-200 text-xl leading-relaxed">Search for a candidate and save them here.</p></div>) : (
+              <CardPageHeader title="My Candidates" subtitle="Tap a name for fresh FEC data" />
+              {(() => {
+                const myCands = watchlist.filter(w => w.in_my_candidates);
+                if (watchlist.length === 0) {
+                  return <div className="text-center py-6"><p className="text-gray-200 text-xl leading-relaxed">Search for a candidate and save them to your watchlist first.</p></div>;
+                }
+                if (myCands.length === 0) {
+                  return <div className="text-center py-6"><p className="text-gray-200 text-xl leading-relaxed">No candidates promoted yet. Tap a candidate on your Watchlist and use "Save to My Candidates."</p></div>;
+                }
+                return (
                 <div className="space-y-3">
-                  <p className="text-gray-300 text-lg text-center mb-1">Tap a name to see latest data</p>
-                  {watchlist.map(w => {
+                  <p className="text-gray-300 text-lg text-center mb-1">Tap a name for fresh data</p>
+                  {myCands.map(w => {
                     const meta = parseMeta(w.location);
                     const pColor = meta ? partyColor(meta.party) : '#9CA3AF';
                     const pAbbr = meta ? partyAbbrev(meta.party) : '';
@@ -749,7 +786,8 @@ function App() {
                     );
                   })}
                 </div>
-              )}
+                );
+              })()}
             </div>
           </div>
         )}
