@@ -69,7 +69,7 @@ const { useState, useEffect } = React;
 
 // == Constants ================================================================
 const APP_NAME = 'Candidate Watch';
-const APP_VERSION = '0.4.1';
+const APP_VERSION = '0.4.2';
 const API_BASE = 'https://candidate-watch-backend.onrender.com';
 const CW_REPO = 'https://raw.githubusercontent.com/bspencer413/candidate-watch-frontend/main';
 const SIGNIN_BG = CW_REPO + '/signin-background.jpg';
@@ -363,6 +363,9 @@ function App() {
   const [autoOpenId, setAutoOpenId] = useState(null);
   const [apiVersion, setApiVersion] = useState('...');
   const [toast, setToast] = useState(null);
+  const [wikiThumbCache, setWikiThumbCache] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('cw_wiki_thumb_cache') || '{}') || {}; } catch(e) { return {}; }
+  });
 
   const showToast = (msg) => {
     setToast(msg);
@@ -383,6 +386,46 @@ function App() {
     }
     // eslint-disable-next-line
   }, [autoOpenId, page, watchlist]);
+
+  // Backfill wiki thumbnails for older saves missing meta.wikiThumb. Cached in localStorage.
+  useEffect(() => {
+    if (!watchlist || watchlist.length === 0) return;
+    const toFetch = [];
+    for (let i = 0; i < watchlist.length; i++) {
+      const w = watchlist[i];
+      const meta = parseMeta(w.location);
+      if (meta && meta.wikiThumb) continue;
+      if (Object.prototype.hasOwnProperty.call(wikiThumbCache, w.name)) continue;
+      toFetch.push(w.name);
+    }
+    if (toFetch.length === 0) return;
+    let cancelled = false;
+    (async () => {
+      const updates = {};
+      for (let i = 0; i < toFetch.length; i++) {
+        if (cancelled) return;
+        const nm = toFetch[i];
+        try {
+          const wiki = await fetchWikiBio(nm);
+          if (wiki && wiki.thumbnail && wiki.thumbnail.source) {
+            updates[nm] = wiki.thumbnail.source;
+          } else {
+            updates[nm] = '';
+          }
+        } catch(e) { updates[nm] = ''; }
+      }
+      if (cancelled) return;
+      if (Object.keys(updates).length > 0) {
+        setWikiThumbCache(prev => {
+          const next = Object.assign({}, prev, updates);
+          try { localStorage.setItem('cw_wiki_thumb_cache', JSON.stringify(next)); } catch(e) {}
+          return next;
+        });
+      }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line
+  }, [watchlist]);
 
   const loadWatchlist = async () => {
     try {
@@ -649,7 +692,7 @@ function App() {
   const Drawer = () => {
     if (!drawerData) return null;
     const { mode, name, meta, wiki, snapshot, loading: drawerLoading } = drawerData;
-    const photo = (meta && meta.wikiThumb) || (wiki && wiki.thumbnail && wiki.thumbnail.source) || '';
+    const photo = (meta && meta.wikiThumb) || (wikiThumbCache && wikiThumbCache[name]) || (wiki && wiki.thumbnail && wiki.thumbnail.source) || '';
     const pColor = meta ? partyColor(meta.party) : '#9CA3AF';
     const pAbbr = meta ? partyAbbrev(meta.party) : '';
     return (
@@ -778,11 +821,12 @@ function App() {
                     const meta = parseMeta(w.location);
                     const pColor = meta ? partyColor(meta.party) : '#9CA3AF';
                     const pAbbr = meta ? partyAbbrev(meta.party) : '';
+                    const thumbSrc = (meta && meta.wikiThumb) || wikiThumbCache[w.name] || '';
                     return (
                       <div key={w.id} className="p-4 rounded-lg border bg-black/40 border-white/15">
                         <div className="flex items-center justify-between gap-3">
-                          {meta && meta.wikiThumb ? (
-                            <img src={meta.wikiThumb} alt={w.name} className="w-14 h-14 rounded-full object-cover border-2 shrink-0" style={{ borderColor: pColor }} />
+                          {thumbSrc ? (
+                            <img src={thumbSrc} alt={w.name} className="w-14 h-14 rounded-full object-cover border-2 shrink-0" style={{ borderColor: pColor }} />
                           ) : (
                             <div className="w-14 h-14 rounded-full bg-black/40 flex items-center justify-center shrink-0 text-xl text-white border" style={{ borderColor: pColor }}>
                               <span style={{ color: pColor, fontWeight: 700 }}>{pAbbr || '?'}</span>
@@ -831,12 +875,13 @@ function App() {
                     const meta = parseMeta(w.location);
                     const pColor = meta ? partyColor(meta.party) : '#9CA3AF';
                     const pAbbr = meta ? partyAbbrev(meta.party) : '';
+                    const thumbSrc = (meta && meta.wikiThumb) || wikiThumbCache[w.name] || '';
                     return (
                       <div key={w.id} className="p-4 bg-black/50 rounded-lg border border-white/15">
                         <div className="flex items-center justify-between">
                           <div className="flex items-center gap-3 flex-1 min-w-0">
-                            {meta && meta.wikiThumb ? (
-                              <img src={meta.wikiThumb} alt={w.name} className="w-14 h-14 rounded-full object-cover border-2 shrink-0" style={{ borderColor: pColor }} />
+                            {thumbSrc ? (
+                              <img src={thumbSrc} alt={w.name} className="w-14 h-14 rounded-full object-cover border-2 shrink-0" style={{ borderColor: pColor }} />
                             ) : (
                               <div className="w-14 h-14 rounded-full bg-black/40 flex items-center justify-center shrink-0 text-xl text-white border" style={{ borderColor: pColor }}>
                                 <span style={{ color: pColor, fontWeight: 700 }}>{pAbbr || '?'}</span>
