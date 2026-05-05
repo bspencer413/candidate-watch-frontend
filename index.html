@@ -69,9 +69,9 @@ const { useState, useEffect } = React;
 
 // == Constants ================================================================
 const APP_NAME = 'Candidate Watch';
-const APP_VERSION = '0.2.0';
+const APP_VERSION = '0.2.2';
 const API_BASE = 'https://candidate-watch-backend.onrender.com';
-const CW_REPO = 'https://raw.githubusercontent.com/bspencer413/candidate-watch/main';
+const CW_REPO = 'https://raw.githubusercontent.com/bspencer413/candidate-watch-frontend/main';
 const SIGNIN_BG = CW_REPO + '/signin-background.jpg';
 const BILL_PHOTO = 'https://raw.githubusercontent.com/bspencer413/memorial-watch/main/Bill.jpeg';
 const TAGLINE = 'Who are you watching?';
@@ -397,7 +397,7 @@ function App() {
 
   const doSearch = async () => {
     if (document.activeElement) document.activeElement.blur();
-    const name = (searchName || '').trim().replace(/\s+/g, ' ');
+    const name = smartTitleCase((searchName || '').trim().replace(/\s+/g, ' '));
     if (!name || name.length < 2) { alert('Please enter a candidate name.'); return; }
     setSearching(true); setSearchResults(null); setSelectedCand(null);
     try {
@@ -622,7 +622,7 @@ function App() {
 
   if (page === 'login') {
     return (
-      <div className="page-bg" style={{ display: 'flex', flexDirection: 'column', minHeight: '100dvh' }}>
+      <div className="page-bg" style={{ display: 'flex', flexDirection: 'column', minHeight: '100dvh', backgroundImage: 'url(' + SIGNIN_BG + ')', backgroundSize: 'cover', backgroundPosition: 'center' }}>
         <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 1 }} />
         <div style={{ position: 'relative', zIndex: 2, display: 'flex', flexDirection: 'column', alignItems: 'stretch', flex: 1, justifyContent: 'center' }}>
           <div style={{ textAlign: 'center', padding: '2rem 1.5rem 1.5rem' }}>
@@ -667,7 +667,7 @@ function App() {
               {searching && <p className="text-white text-center py-4 animate-pulse text-xl">Searching FEC...</p>}
               {!searched ? (
                 <div className="space-y-2">
-                  <ClearableInput value={searchName} onChange={(e) => setSearchName(e.target.value)} onBlur={(e) => setSearchName(e.target.value.trim())} onKeyPress={(e) => e.key === 'Enter' && doSearch()} placeholder="Candidate name" inputClass={iClass} />
+                  <ClearableInput value={searchName} onChange={(e) => setSearchName(e.target.value)} onBlur={(e) => setSearchName(smartTitleCase(e.target.value.trim()))} onKeyPress={(e) => e.key === 'Enter' && doSearch()} placeholder="Candidate name" inputClass={iClass} />
                   <ClearableInput value={searchState} onChange={(e) => setSearchState(e.target.value.toUpperCase().slice(0,2))} onKeyPress={(e) => e.key === 'Enter' && doSearch()} placeholder="State (optional, e.g. TX)" maxLength={2} inputClass={iClass} />
                   <button onClick={doSearch} disabled={searching} className="w-full py-3 text-white rounded-lg flex items-center justify-center gap-2 disabled:opacity-50 text-2xl font-bold" style={{ backgroundColor: 'var(--cw-accent)' }}>
                     <SearchIcon /> {searching ? 'Searching...' : 'Find Candidate'}
