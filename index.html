@@ -69,7 +69,7 @@ const { useState, useEffect } = React;
 
 // == Constants ================================================================
 const APP_NAME = 'Candidate Watch';
-const APP_VERSION = '0.3.0';
+const APP_VERSION = '0.3.2';
 const API_BASE = 'https://candidate-watch-backend.onrender.com';
 const CW_REPO = 'https://raw.githubusercontent.com/bspencer413/candidate-watch-frontend/main';
 const SIGNIN_BG = CW_REPO + '/signin-background.jpg';
@@ -472,12 +472,19 @@ function App() {
     } catch (error) { alert('Error: ' + error.message); }
   };
 
-  // Watchlist drawer (light): bio + Check button
+  // Watchlist drawer: shows full data from cached snapshot, with Check + Promote buttons
   const openWatchlistDrawer = async (wItem) => {
     const meta = parseMeta(wItem.location);
-    setDrawerData({ mode: 'watchlist', name: wItem.name, watchlistId: wItem.id, meta: meta, wiki: null, snapshot: null, loading: true });
+    let snapshot = getStatSnapshot(wItem.id);
+    setDrawerData({ mode: 'watchlist', name: wItem.name, watchlistId: wItem.id, meta: meta, wiki: null, snapshot: snapshot, loading: true });
     const wiki = await fetchWikiBio(wItem.name).catch(() => null);
-    setDrawerData(prev => prev ? Object.assign({}, prev, { wiki: wiki, loading: false }) : null);
+    // If no snapshot cached locally (e.g. user signed in fresh), pull from FEC
+    if (!snapshot && meta && meta.fecId) {
+      const profile = await fetchFecCandidate(meta.fecId).catch(() => null);
+      const fresh = buildSnapshot(profile, null);
+      if (fresh) { saveStatSnapshot(wItem.id, fresh); snapshot = fresh; }
+    }
+    setDrawerData(prev => prev ? Object.assign({}, prev, { wiki: wiki, snapshot: snapshot, loading: false }) : null);
   };
 
   // My Candidates drawer: tap = fresh FEC fetch (canonical "one-time search" pattern)
@@ -517,7 +524,7 @@ function App() {
       const newSnap = buildSnapshot(profile, cong);
       if (!newSnap) { alert('Could not reach FEC. Try again later.'); return; }
       const oldSnap = getStatSnapshot(drawerData.watchlistId);
-      if (!snapshotChanged(oldSnap, newSnap)) { showToast('No New Filings Yet'); return; }
+      if (!snapshotChanged(oldSnap, newSnap)) { return; }
       saveStatSnapshot(drawerData.watchlistId, newSnap);
       setDrawerData(prev => prev ? Object.assign({}, prev, { mode: 'mycandidates', snapshot: newSnap }) : null);
     } catch(e) { alert('Error: ' + e.message); }
@@ -537,7 +544,6 @@ function App() {
       // Update local watchlist state and drawer
       setWatchlist(prev => prev.map(w => w.id === drawerData.watchlistId ? Object.assign({}, w, { in_my_candidates: true }) : w));
       setDrawerData(prev => prev ? Object.assign({}, prev, { promoted: true }) : null);
-      showToast('Saved to My Candidates');
     } catch(e) { alert('Error: ' + e.message); }
   };
 
@@ -622,14 +628,14 @@ function App() {
                   </div>
                 </div>
                 {wiki && wiki.extract && <p className="text-gray-100 text-xl leading-relaxed mb-3">{wiki.extract}</p>}
+                <StatPanel snapshot={snapshot} />
+                {snapshot && snapshot.capturedAt && (<p className="text-white/40 text-sm text-center mt-3">Last updated {new Date(snapshot.capturedAt).toLocaleString()}</p>)}
                 {mode === 'watchlist' && (
-                  <button onClick={checkForNewStats} disabled={checkingStats} className="w-full py-4 text-white rounded-xl font-bold text-2xl flex items-center justify-center gap-2 disabled:opacity-50 mt-2" style={{ backgroundColor: 'var(--cw-accent)' }}>
+                  <button onClick={checkForNewStats} disabled={checkingStats} className="w-full py-4 text-white rounded-xl font-bold text-2xl flex items-center justify-center gap-2 disabled:opacity-50 mt-3" style={{ backgroundColor: 'var(--cw-accent)' }}>
                     <RefreshIcon /> {checkingStats ? 'Checking...' : 'Check for new filings'}
                   </button>
                 )}
-                {mode === 'mycandidates' && <StatPanel snapshot={snapshot} />}
-                {mode === 'mycandidates' && snapshot && snapshot.capturedAt && (<p className="text-white/40 text-sm text-center mt-3">Last updated {new Date(snapshot.capturedAt).toLocaleString()}</p>)}
-                {mode === 'mycandidates' && drawerData.watchlistId && (() => {
+                {drawerData.watchlistId && (() => {
                   const wItem = watchlist.find(w => w.id === drawerData.watchlistId);
                   const isPromoted = wItem && wItem.in_my_candidates;
                   if (isPromoted) {
