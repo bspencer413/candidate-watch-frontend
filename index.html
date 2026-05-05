@@ -69,7 +69,7 @@ const { useState, useEffect } = React;
 
 // == Constants ================================================================
 const APP_NAME = 'Candidate Watch';
-const APP_VERSION = '0.4.3';
+const APP_VERSION = '0.4.4';
 const API_BASE = 'https://candidate-watch-backend.onrender.com';
 const CW_REPO = 'https://raw.githubusercontent.com/bspencer413/candidate-watch-frontend/main';
 const SIGNIN_BG = CW_REPO + '/signin-background.jpg';
@@ -165,11 +165,23 @@ const fetchCongressMember = async (bioguideId) => {
 };
 
 const fetchWikiBio = async (name) => {
+  if (!name) return null;
+  // Direct title lookup (fast path)
   try {
     const sum = await (await fetch('https://en.wikipedia.org/api/rest_v1/page/summary/' + encodeURIComponent(name))).json();
-    if (sum && sum.title && sum.extract) return sum;
-    return null;
-  } catch(e) { return null; }
+    if (sum && sum.title && sum.extract && sum.type !== 'disambiguation') return sum;
+  } catch(e) {}
+  // Opensearch fuzzy-match fallback (handles legal-vs-preferred names like "Thomas Ossoff" -> "Jon Ossoff")
+  try {
+    const r = await fetch('https://en.wikipedia.org/w/api.php?action=opensearch&search=' + encodeURIComponent(name) + '&limit=1&namespace=0&format=json&origin=*');
+    const arr = await r.json();
+    if (arr && Array.isArray(arr) && arr[1] && arr[1].length > 0) {
+      const title = arr[1][0];
+      const sum = await (await fetch('https://en.wikipedia.org/api/rest_v1/page/summary/' + encodeURIComponent(title))).json();
+      if (sum && sum.title && sum.extract && sum.type !== 'disambiguation') return sum;
+    }
+  } catch(e) {}
+  return null;
 };
 
 // == Icons ====================================================================
@@ -375,7 +387,7 @@ function App() {
   const [apiVersion, setApiVersion] = useState('...');
   const [toast, setToast] = useState(null);
   const [wikiThumbCache, setWikiThumbCache] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('cw_wiki_thumb_cache_v2') || '{}') || {}; } catch(e) { return {}; }
+    try { return JSON.parse(localStorage.getItem('cw_wiki_thumb_cache_v3') || '{}') || {}; } catch(e) { return {}; }
   });
 
   const showToast = (msg) => {
@@ -429,7 +441,7 @@ function App() {
       if (Object.keys(updates).length > 0) {
         setWikiThumbCache(prev => {
           const next = Object.assign({}, prev, updates);
-          try { localStorage.setItem('cw_wiki_thumb_cache_v2', JSON.stringify(next)); } catch(e) {}
+          try { localStorage.setItem('cw_wiki_thumb_cache_v3', JSON.stringify(next)); } catch(e) {}
           return next;
         });
       }
@@ -531,8 +543,14 @@ function App() {
     setLoadingSave(true);
     try {
       const token = localStorage.getItem('token');
-      // Fetch wiki thumbnail to cache for list view
-      const wiki = await fetchWikiBio(fecNameToNatural(candName)).catch(() => null);
+      // Reuse the wiki bio fetched at search time when it has a thumbnail (already matched the right article).
+      // Fall back to a fresh lookup using FEC-derived name only if needed.
+      let wiki = (searchResults && searchResults.wiki && searchResults.wiki.thumbnail && searchResults.wiki.thumbnail.source)
+        ? searchResults.wiki
+        : null;
+      if (!wiki) {
+        wiki = await fetchWikiBio(fecNameToNatural(candName)).catch(() => null);
+      }
       const wikiThumb = (wiki && wiki.thumbnail && wiki.thumbnail.source) ? wiki.thumbnail.source : null;
       const meta = JSON.stringify({
         fecId: cand.candidate_id,
@@ -813,7 +831,7 @@ function App() {
               {searching && backendWaking && <p className="text-white/60 text-center pb-2 animate-pulse text-lg">Waking up the server...</p>}
               {!searched ? (
                 <div className="space-y-2">
-                  <ClearableInput value={searchName} onChange={(e) => setSearchName(e.target.value)} onBlur={(e) => setSearchName(smartTitleCase(e.target.value.trim()))} onKeyPress={(e) => e.key === 'Enter' && doSearch()} placeholder="Candidate name" inputClass={iClass} />
+                  <ClearableInput value={searchName} onChange={(e) => setSearchName(e.target.value)} onBlur={(e) => setSearchName(smartTitleCase(e.target.value.trim()))} onKeyPress={(e) => e.key === 'Enter' && doSearch()} placeholder="First and last name (e.g., Thom Tillis)" inputClass={iClass} />
                   <ClearableInput value={searchState} onChange={(e) => setSearchState(e.target.value.toUpperCase().slice(0,2))} onKeyPress={(e) => e.key === 'Enter' && doSearch()} placeholder="State (optional, e.g. TX)" maxLength={2} inputClass={iClass} />
                   <button onClick={doSearch} disabled={searching} className="w-full py-3 text-white rounded-lg flex items-center justify-center gap-2 disabled:opacity-50 text-2xl font-bold" style={{ backgroundColor: 'var(--cw-accent)' }}>
                     <SearchIcon /> {searching ? 'Searching...' : 'Find Candidate'}
