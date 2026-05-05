@@ -69,7 +69,7 @@ const { useState, useEffect } = React;
 
 // == Constants ================================================================
 const APP_NAME = 'Candidate Watch';
-const APP_VERSION = '0.4.2';
+const APP_VERSION = '0.4.3';
 const API_BASE = 'https://candidate-watch-backend.onrender.com';
 const CW_REPO = 'https://raw.githubusercontent.com/bspencer413/candidate-watch-frontend/main';
 const SIGNIN_BG = CW_REPO + '/signin-background.jpg';
@@ -84,6 +84,17 @@ const PT = isPhone ? '36vh' : isTablet ? '40vh' : '38vh';
 // == Helpers ==================================================================
 const toTitleCase = (s) => s ? s.replace(/\w\S*/g, t => t.charAt(0).toUpperCase() + t.substr(1).toLowerCase()).replace(/'\w/g, t => t.toUpperCase()) : s;
 const smartTitleCase = (s) => s ? s.trim().replace(/\s+/g, ' ').split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ') : s;
+// Convert FEC "LAST, FIRST [MIDDLE/SUFFIX]" to natural "First Last" for Wikipedia lookups
+const fecNameToNatural = (name) => {
+  if (!name) return name;
+  const parts = name.split(',');
+  if (parts.length < 2) return smartTitleCase(name.toLowerCase());
+  const last = parts[0].trim();
+  const rest = parts.slice(1).join(',').trim();
+  const firstWord = rest.split(/\s+/)[0] || '';
+  if (!firstWord) return smartTitleCase(last.toLowerCase());
+  return smartTitleCase((firstWord + ' ' + last).toLowerCase());
+};
 const fmtMoney = (n) => {
   if (n === null || n === undefined || isNaN(n)) return '--';
   const v = Number(n);
@@ -364,7 +375,7 @@ function App() {
   const [apiVersion, setApiVersion] = useState('...');
   const [toast, setToast] = useState(null);
   const [wikiThumbCache, setWikiThumbCache] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('cw_wiki_thumb_cache') || '{}') || {}; } catch(e) { return {}; }
+    try { return JSON.parse(localStorage.getItem('cw_wiki_thumb_cache_v2') || '{}') || {}; } catch(e) { return {}; }
   });
 
   const showToast = (msg) => {
@@ -406,7 +417,7 @@ function App() {
         if (cancelled) return;
         const nm = toFetch[i];
         try {
-          const wiki = await fetchWikiBio(nm);
+          const wiki = await fetchWikiBio(fecNameToNatural(nm));
           if (wiki && wiki.thumbnail && wiki.thumbnail.source) {
             updates[nm] = wiki.thumbnail.source;
           } else {
@@ -418,7 +429,7 @@ function App() {
       if (Object.keys(updates).length > 0) {
         setWikiThumbCache(prev => {
           const next = Object.assign({}, prev, updates);
-          try { localStorage.setItem('cw_wiki_thumb_cache', JSON.stringify(next)); } catch(e) {}
+          try { localStorage.setItem('cw_wiki_thumb_cache_v2', JSON.stringify(next)); } catch(e) {}
           return next;
         });
       }
@@ -491,17 +502,20 @@ function App() {
     if (document.activeElement) document.activeElement.blur();
     const name = smartTitleCase((searchName || '').trim().replace(/\s+/g, ' '));
     if (!name || name.length < 2) { alert('Please enter a candidate name.'); return; }
-    setSearching(true); setSearchResults(null); setSelectedCand(null);
+    setSearching(true); setSearchResults(null); setSelectedCand(null); setBackendWaking(false);
+    const wakeTimer = setTimeout(() => setBackendWaking(true), 3000);
     try {
       const st = (searchState || '').trim().toUpperCase().slice(0, 2);
       const [wiki, candidates] = await Promise.all([
         fetchWikiBio(name).catch(() => null),
         fetchFecSearch(name, 'S', st || null).catch(() => [])
       ]);
+      clearTimeout(wakeTimer); setBackendWaking(false);
       setSearchResults({ wiki, candidates, queryName: name });
       setSearched(true);
       if (candidates.length === 1) setSelectedCand(candidates[0]);
     } catch(e) {
+      clearTimeout(wakeTimer); setBackendWaking(false);
       setSearchResults({ wiki: null, candidates: [], queryName: name });
       setSearched(true);
     }
@@ -518,7 +532,7 @@ function App() {
     try {
       const token = localStorage.getItem('token');
       // Fetch wiki thumbnail to cache for list view
-      const wiki = await fetchWikiBio(candName).catch(() => null);
+      const wiki = await fetchWikiBio(fecNameToNatural(candName)).catch(() => null);
       const wikiThumb = (wiki && wiki.thumbnail && wiki.thumbnail.source) ? wiki.thumbnail.source : null;
       const meta = JSON.stringify({
         fecId: cand.candidate_id,
@@ -796,6 +810,7 @@ function App() {
             </div>
             <div className={cardClass} style={Object.assign({}, cardStyle, { overflowY: 'auto', maxHeight: 'calc(100dvh - ' + PT + ' - 6rem)' })}>
               {searching && <p className="text-white text-center py-4 animate-pulse text-xl">Searching FEC...</p>}
+              {searching && backendWaking && <p className="text-white/60 text-center pb-2 animate-pulse text-lg">Waking up the server...</p>}
               {!searched ? (
                 <div className="space-y-2">
                   <ClearableInput value={searchName} onChange={(e) => setSearchName(e.target.value)} onBlur={(e) => setSearchName(smartTitleCase(e.target.value.trim()))} onKeyPress={(e) => e.key === 'Enter' && doSearch()} placeholder="Candidate name" inputClass={iClass} />
