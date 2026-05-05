@@ -1,8 +1,0 @@
-fastapi
-uvicorn[standard]
-pydantic[email]
-python-jose[cryptography]
-PyJWT
-bcrypt
-psycopg2-binary
-apscheduler
