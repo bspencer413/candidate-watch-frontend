@@ -69,7 +69,7 @@ const { useState, useEffect } = React;
 
 // == Constants ================================================================
 const APP_NAME = 'Candidate Watch';
-const APP_VERSION = '0.3.2';
+const APP_VERSION = '0.4.0';
 const API_BASE = 'https://candidate-watch-backend.onrender.com';
 const CW_REPO = 'https://raw.githubusercontent.com/bspencer413/candidate-watch-frontend/main';
 const SIGNIN_BG = CW_REPO + '/signin-background.jpg';
@@ -231,8 +231,25 @@ const StatPanel = ({ snapshot }) => {
   const filings = snapshot.recentFilings || [];
   const cong = snapshot.congress || {};
   const sponsored = (cong && cong.sponsored) || [];
+  const cosponsored = (cong && cong.cosponsored) || [];
+  const member = (cong && cong.member) || {};
+  const terms = member.terms || [];
   const cand = snapshot.candidate || {};
   const incumbent = (cand.incumbent_challenge || '').toLowerCase().indexOf('incumbent') >= 0;
+
+  // Derived metrics
+  const receipts = Number(t.receipts) || 0;
+  const disbursements = Number(t.disbursements) || 0;
+  const burnRate = receipts > 0 ? Math.round((disbursements / receipts) * 100) : null;
+  const indiv = Number(t.individual_contributions) || 0;
+  const pac = Number(t.other_political_committee_contributions) || 0;
+  const fundingTotal = indiv + pac;
+  const indivPct = fundingTotal > 0 ? Math.round((indiv / fundingTotal) * 100) : null;
+  const pacPct = fundingTotal > 0 ? 100 - indivPct : null;
+  // Earliest term start year for "years in office"
+  const startYears = terms.map(tm => Number(tm.startYear)).filter(y => !isNaN(y) && y > 1900);
+  const firstYear = startYears.length > 0 ? Math.min.apply(null, startYears) : null;
+  const yearsServed = firstYear ? (new Date().getFullYear() - firstYear) : null;
 
   return (
     <div className="space-y-3">
@@ -246,7 +263,29 @@ const StatPanel = ({ snapshot }) => {
           <div><p className="text-white/60 text-base">Cash on Hand</p><p className="text-white text-2xl font-bold" style={{ color: 'var(--cw-accent-2)' }}>{fmtMoney(t.cash_on_hand_end_period)}</p></div>
           <div><p className="text-white/60 text-base">Debt</p><p className="text-white text-2xl font-bold">{fmtMoney(t.debts_owed_by_committee)}</p></div>
         </div>
+        {burnRate !== null && (
+          <div className="mt-3 pt-3 border-t border-white/10">
+            <p className="text-white/60 text-base">Burn Rate <span className="text-white/40 text-sm">(spent / raised)</span></p>
+            <p className="text-white text-2xl font-bold">{burnRate}%</p>
+          </div>
+        )}
       </div>
+
+      {/* Funding sources */}
+      {indivPct !== null && (
+        <div className="bg-black/40 border border-white/15 rounded-xl p-4">
+          <h4 className="text-white text-2xl font-bold mb-2" style={{ fontFamily: 'var(--cw-display-font)' }}>FUNDING SOURCES</h4>
+          <div className="grid grid-cols-2 gap-3">
+            <div><p className="text-white/60 text-base">From Individuals</p><p className="text-white text-2xl font-bold">{indivPct}%</p><p className="text-white/50 text-sm">{fmtMoney(indiv)}</p></div>
+            <div><p className="text-white/60 text-base">From PACs</p><p className="text-white text-2xl font-bold">{pacPct}%</p><p className="text-white/50 text-sm">{fmtMoney(pac)}</p></div>
+          </div>
+          {/* Visual bar */}
+          <div className="mt-3 flex h-2 rounded overflow-hidden bg-white/10">
+            <div style={{ width: indivPct + '%', backgroundColor: '#3B82F6' }} />
+            <div style={{ width: pacPct + '%', backgroundColor: '#F59E0B' }} />
+          </div>
+        </div>
+      )}
 
       {/* Recent filings */}
       {filings.length > 0 && (
@@ -263,19 +302,29 @@ const StatPanel = ({ snapshot }) => {
         </div>
       )}
 
-      {/* Voting / bills (incumbents only) */}
-      {incumbent && sponsored.length > 0 && (
+      {/* Legislative activity (incumbents only) */}
+      {incumbent && (yearsServed !== null || sponsored.length > 0 || cosponsored.length > 0) && (
         <div className="bg-black/40 border border-white/15 rounded-xl p-4">
-          <h4 className="text-white text-2xl font-bold mb-2" style={{ fontFamily: 'var(--cw-display-font)' }}>RECENT BILLS SPONSORED</h4>
-          <div className="space-y-2">
-            {sponsored.slice(0, 4).map((b, i) => (
-              <div key={i} className="text-white/90 text-lg border-b border-white/10 pb-1">
-                <p className="font-semibold">{b.type || ''} {b.number || ''} <span className="text-white/60 text-base">{fmtDate(b.introduced_date)}</span></p>
-                <p className="text-white/80 text-base">{b.title}</p>
-                {b.latest_action && <p className="text-white/50 text-sm italic">{b.latest_action}</p>}
-              </div>
-            ))}
+          <h4 className="text-white text-2xl font-bold mb-2" style={{ fontFamily: 'var(--cw-display-font)' }}>LEGISLATIVE ACTIVITY</h4>
+          <div className="grid grid-cols-3 gap-3 mb-3">
+            {yearsServed !== null && <div><p className="text-white/60 text-sm">Years Served</p><p className="text-white text-2xl font-bold">{yearsServed}</p></div>}
+            <div><p className="text-white/60 text-sm">Sponsored</p><p className="text-white text-2xl font-bold">{sponsored.length}</p></div>
+            <div><p className="text-white/60 text-sm">Cosponsored</p><p className="text-white text-2xl font-bold">{cosponsored.length}</p></div>
           </div>
+          {sponsored.length > 0 && (
+            <>
+              <p className="text-white/60 text-base font-bold mt-2 mb-1">Recent bills sponsored:</p>
+              <div className="space-y-2">
+                {sponsored.slice(0, 4).map((b, i) => (
+                  <div key={i} className="text-white/90 text-lg border-b border-white/10 pb-1">
+                    <p className="font-semibold">{b.type || ''} {b.number || ''} <span className="text-white/60 text-base">{fmtDate(b.introduced_date)}</span></p>
+                    <p className="text-white/80 text-base">{b.title}</p>
+                    {b.latest_action && <p className="text-white/50 text-sm italic">{b.latest_action}</p>}
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
         </div>
       )}
 
@@ -425,6 +474,9 @@ function App() {
     setLoadingSave(true);
     try {
       const token = localStorage.getItem('token');
+      // Fetch wiki thumbnail to cache for list view
+      const wiki = await fetchWikiBio(candName).catch(() => null);
+      const wikiThumb = (wiki && wiki.thumbnail && wiki.thumbnail.source) ? wiki.thumbnail.source : null;
       const meta = JSON.stringify({
         fecId: cand.candidate_id,
         office: cand.office,
@@ -435,6 +487,7 @@ function App() {
         incumbent: (cand.incumbent_challenge || '').toLowerCase().indexOf('incumbent') >= 0,
         principalCommittee: cand.principal_committee || null,
         cycle: cand.cycle || null,
+        wikiThumb: wikiThumb,
       });
       const r = await fetch(API_BASE + '/watchlist', {
         method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
@@ -662,7 +715,7 @@ function App() {
         <div style={{ position: 'relative', zIndex: 2, display: 'flex', flexDirection: 'column', alignItems: 'stretch', flex: 1, justifyContent: 'center' }}>
           <div style={{ textAlign: 'center', padding: '2rem 1.5rem 1.5rem' }}>
             <h1 style={{ color: '#fff', fontSize: isPhone ? '3.5rem' : '5.5rem', fontWeight: 900, fontFamily: 'var(--cw-display-font)', letterSpacing: '0.04em', lineHeight: 0.9, WebkitTextStroke: '2px #fff', textShadow: '0 4px 20px rgba(0,0,0,0.95), 0 2px 8px rgba(0,0,0,0.9)', margin: 0 }}>CANDIDATE<br/>WATCH</h1>
-            <p style={{ color: '#fff', fontSize: isPhone ? '1.6rem' : '2rem', fontFamily: 'var(--cw-display-font)', letterSpacing: '0.04em', lineHeight: 1.15, textShadow: '0 2px 8px rgba(0,0,0,0.9)', marginTop: '1.25rem' }}>Track Senate Candidates<br/>Across the Country</p>
+            <p style={{ color: '#fff', fontSize: isPhone ? '1.7rem' : '2.1rem', fontWeight: 700, fontFamily: 'var(--cw-display-font)', letterSpacing: '0.04em', lineHeight: 1.2, textShadow: '0 3px 12px rgba(0,0,0,1), 0 1px 4px rgba(0,0,0,1)', marginTop: '1.25rem', padding: '0.6rem 1rem', backgroundColor: 'rgba(0,0,0,0.45)', borderRadius: '0.5rem', display: 'inline-block' }}>Track Senate Candidates<br/>Across the Country</p>
           </div>
           <div style={{ paddingLeft: '1.5rem', paddingRight: '1.5rem' }}>
             <div className="rounded-2xl p-4 shadow-2xl space-y-3" style={{ backgroundColor: 'rgba(0,0,0,0.65)', backdropFilter: 'blur(8px)', borderColor: 'var(--cw-card-border)', borderWidth: '1px' }}>
@@ -727,7 +780,14 @@ function App() {
                     const pAbbr = meta ? partyAbbrev(meta.party) : '';
                     return (
                       <div key={w.id} className="p-4 rounded-lg border bg-black/40 border-white/15">
-                        <div className="flex items-center justify-between">
+                        <div className="flex items-center justify-between gap-3">
+                          {meta && meta.wikiThumb ? (
+                            <img src={meta.wikiThumb} alt={w.name} className="w-14 h-14 rounded-full object-cover border-2 shrink-0" style={{ borderColor: pColor }} />
+                          ) : (
+                            <div className="w-14 h-14 rounded-full bg-black/40 flex items-center justify-center shrink-0 text-xl text-white border" style={{ borderColor: pColor }}>
+                              <span style={{ color: pColor, fontWeight: 700 }}>{pAbbr || '?'}</span>
+                            </div>
+                          )}
                           <div className="flex-1 min-w-0">
                             <button onClick={() => openWatchlistDrawer(w)} className="text-left w-full">
                               <h3 className="font-semibold text-2xl text-white underline decoration-dotted truncate">{w.name}</h3>
@@ -775,9 +835,13 @@ function App() {
                       <div key={w.id} className="p-4 bg-black/50 rounded-lg border border-white/15">
                         <div className="flex items-center justify-between">
                           <div className="flex items-center gap-3 flex-1 min-w-0">
-                            <div className="w-14 h-14 rounded-full bg-black/40 flex items-center justify-center shrink-0 text-xl text-white border" style={{ borderColor: pColor }}>
-                              <span style={{ color: pColor, fontWeight: 700 }}>{pAbbr || '?'}</span>
-                            </div>
+                            {meta && meta.wikiThumb ? (
+                              <img src={meta.wikiThumb} alt={w.name} className="w-14 h-14 rounded-full object-cover border-2 shrink-0" style={{ borderColor: pColor }} />
+                            ) : (
+                              <div className="w-14 h-14 rounded-full bg-black/40 flex items-center justify-center shrink-0 text-xl text-white border" style={{ borderColor: pColor }}>
+                                <span style={{ color: pColor, fontWeight: 700 }}>{pAbbr || '?'}</span>
+                              </div>
+                            )}
                             <div className="flex-1 min-w-0">
                               <button onClick={() => openMyCandidatesDrawer(w)} className="text-left w-full">
                                 <h3 className="font-semibold text-2xl text-white underline decoration-dotted truncate">{w.name}</h3>
