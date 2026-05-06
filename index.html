@@ -69,7 +69,7 @@ const { useState, useEffect } = React;
 
 // == Constants ================================================================
 const APP_NAME = 'Candidate Watch';
-const APP_VERSION = '0.5.3';
+const APP_VERSION = '0.5.4';
 const API_BASE = 'https://candidate-watch-backend.onrender.com';
 const CW_REPO = 'https://raw.githubusercontent.com/bspencer413/candidate-watch-frontend/main';
 const SIGNIN_BG = CW_REPO + '/signin-background.jpg';
@@ -720,9 +720,11 @@ function App() {
       const isIncumbent = (cand.incumbent_challenge || '').toLowerCase().indexOf('incumbent') >= 0;
       // For incumbents, look up bioguide_id so the Legislative Activity panel can pull
       // sponsored/cosponsored bills + (later) voting record + attendance.
+      // FEC returns office as "House"/"Senate" (full word) preferred -- /congress/lookup expects "H"/"S".
+      const officeCode = (cand.office || '').toString().toUpperCase().charAt(0);
       let bioguideId = null;
-      if (isIncumbent && cand.office && cand.state) {
-        const lookup = await fetchCongressLookup(cand.office, cand.state, cand.district || null);
+      if (isIncumbent && officeCode && cand.state) {
+        const lookup = await fetchCongressLookup(officeCode, cand.state, cand.district || null);
         if (lookup && lookup.bioguide_id) bioguideId = lookup.bioguide_id;
       }
       const meta = JSON.stringify({
