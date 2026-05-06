@@ -69,7 +69,7 @@ const { useState, useEffect } = React;
 
 // == Constants ================================================================
 const APP_NAME = 'Candidate Watch';
-const APP_VERSION = '0.5.1';
+const APP_VERSION = '0.5.2';
 const API_BASE = 'https://candidate-watch-backend.onrender.com';
 const CW_REPO = 'https://raw.githubusercontent.com/bspencer413/candidate-watch-frontend/main';
 const SIGNIN_BG = CW_REPO + '/signin-background.jpg';
@@ -165,6 +165,16 @@ const fetchFecCandidate = async (candidateId) => {
 const fetchCongressMember = async (bioguideId) => {
   try {
     const r = await fetch(API_BASE + '/congress/member/' + encodeURIComponent(bioguideId));
+    if (!r.ok) return null;
+    return await r.json();
+  } catch(e) { return null; }
+};
+
+const fetchCongressLookup = async (office, state, district) => {
+  try {
+    const params = ['office=' + encodeURIComponent(office), 'state=' + encodeURIComponent(state)];
+    if (district) params.push('district=' + encodeURIComponent(district));
+    const r = await fetch(API_BASE + '/congress/lookup?' + params.join('&'));
     if (!r.ok) return null;
     return await r.json();
   } catch(e) { return null; }
@@ -636,6 +646,14 @@ function App() {
         wiki = await fetchWikiBio(fecNameToNatural(candName)).catch(() => null);
       }
       const wikiThumb = (wiki && wiki.thumbnail && wiki.thumbnail.source) ? wiki.thumbnail.source : null;
+      const isIncumbent = (cand.incumbent_challenge || '').toLowerCase().indexOf('incumbent') >= 0;
+      // For incumbents, look up bioguide_id so the Legislative Activity panel can pull
+      // sponsored/cosponsored bills + (later) voting record + attendance.
+      let bioguideId = null;
+      if (isIncumbent && cand.office && cand.state) {
+        const lookup = await fetchCongressLookup(cand.office, cand.state, cand.district || null);
+        if (lookup && lookup.bioguide_id) bioguideId = lookup.bioguide_id;
+      }
       const meta = JSON.stringify({
         fecId: cand.candidate_id,
         office: cand.office,
@@ -643,7 +661,8 @@ function App() {
         district: cand.district,
         party: cand.party,
         partyAbbr: partyAbbrev(cand.party),
-        incumbent: (cand.incumbent_challenge || '').toLowerCase().indexOf('incumbent') >= 0,
+        incumbent: isIncumbent,
+        bioguideId: bioguideId,
         principalCommittee: cand.principal_committee || null,
         cycle: cand.cycle || null,
         wikiThumb: wikiThumb,
@@ -946,6 +965,7 @@ function App() {
                       <button onClick={doGeocode} disabled={geocoding || !searchAddress.trim()} className="w-full py-2 text-white rounded-lg disabled:opacity-50 text-lg font-bold" style={{ backgroundColor: 'rgba(255,255,255,0.15)' }}>
                         {geocoding ? 'Looking up...' : 'Look up district'}
                       </button>
+                      <p className="text-white/50 text-xs italic">Address used only to find your district. Nothing saved.</p>
                       {geocodeMsg && <p className="text-yellow-200 text-base">{geocodeMsg}</p>}
                       <p className="text-white/60 text-sm text-center">— or pick manually —</p>
                       <div className="flex gap-2">
@@ -1109,18 +1129,18 @@ function App() {
               </div>
               <p className="text-white text-2xl font-bold italic mb-3">{TAGLINE}</p>
               <div className="space-y-3 text-gray-100 text-xl leading-relaxed">
-                <p>The U.S. Senate and House candidates you care about, all in one place.</p>
-                <p>Add anyone running for U.S. Senate or House to your watchlist. Candidate Watch tracks the things that matter -- new FEC filings, fundraising changes, sponsored bills, key votes -- and tells you when something changes.</p>
+                <p>Track U.S. Senate and House candidates without lifting a finger. Add anyone running for federal office to your Watchlist -- we monitor FEC filings every day and alert you the moment something changes.</p>
+                <p>Promote your priorities to My Candidates for instant fresh data on tap.</p>
                 <p>Just the facts. No polls. No predictions. No partisan spin.</p>
               </div>
             </div>
             <div className={cardClass} style={cardStyle}>
               <h3 className="text-white text-2xl font-bold mb-4 text-center" style={{ fontFamily: 'var(--cw-display-font)', letterSpacing: '0.05em', textTransform: 'uppercase' }}>How it works</h3>
               <div className="space-y-4">
-                <div className="flex gap-3 items-start"><span className="text-white text-2xl font-black w-7 shrink-0">1.</span><p className="text-gray-100 text-xl">Search by name. We pull bio from Wikipedia and finance data from the FEC.</p></div>
-                <div className="flex gap-3 items-start"><span className="text-white text-2xl font-black w-7 shrink-0">2.</span><p className="text-gray-100 text-xl">Save with one tap. We capture their current finances right away.</p></div>
-                <div className="flex gap-3 items-start"><span className="text-white text-2xl font-black w-7 shrink-0">3.</span><p className="text-gray-100 text-xl">Tap on Watchlist to check for new filings on demand.</p></div>
-                <div className="flex gap-3 items-start"><span className="text-white text-2xl font-black w-7 shrink-0">4.</span><p className="text-gray-100 text-xl">Tap on My Candidates to see saved finance and voting data.</p></div>
+                <div className="flex gap-3 items-start"><span className="text-white text-2xl font-black w-7 shrink-0">1.</span><p className="text-gray-100 text-xl">Search by name. We pull bio from Wikipedia and live finance from the FEC.</p></div>
+                <div className="flex gap-3 items-start"><span className="text-white text-2xl font-black w-7 shrink-0">2.</span><p className="text-gray-100 text-xl">Save to Watchlist with one tap. We capture their current finances and start watching daily.</p></div>
+                <div className="flex gap-3 items-start"><span className="text-white text-2xl font-black w-7 shrink-0">3.</span><p className="text-gray-100 text-xl">Get alerts when something changes. Watchlist runs a daily background check -- new filings, fundraising shifts, sponsored bills -- and notifies you.</p></div>
+                <div className="flex gap-3 items-start"><span className="text-white text-2xl font-black w-7 shrink-0">4.</span><p className="text-gray-100 text-xl">Promote to My Candidates for your priority list. Every tap there pulls fresh data from FEC right now.</p></div>
               </div>
             </div>
             <div className={cardClass} style={cardStyle}>
@@ -1129,7 +1149,8 @@ function App() {
               <div className="space-y-3 text-gray-100 text-xl leading-relaxed">
                 <p><strong className="text-white">We collect:</strong> your email, watchlist, and search activity.</p>
                 <p><strong className="text-white">We do not:</strong> sell your data, ever.</p>
-                <p><strong className="text-white">Sources:</strong> Bio from Wikipedia. Finance from the Federal Election Commission. Bills and votes from Congress.gov.</p>
+                <p><strong className="text-white">Address lookup:</strong> when you use the district finder on the House search, your address is sent only to the U.S. Census geocoder and never stored on our servers.</p>
+                <p><strong className="text-white">Sources:</strong> Bio from Wikipedia. Finance from the Federal Election Commission. Bills and votes from Congress.gov. District lookup from the U.S. Census Bureau.</p>
                 <p><strong className="text-white">Your rights:</strong> Delete your account and all data anytime.</p>
                 <a href="mailto:hello@candidatewatch.app" className="text-white/80 text-xl">hello@candidatewatch.app</a>
               </div>
