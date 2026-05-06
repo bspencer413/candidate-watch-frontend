@@ -69,7 +69,7 @@ const { useState, useEffect } = React;
 
 // == Constants ================================================================
 const APP_NAME = 'Candidate Watch';
-const APP_VERSION = '0.5.2';
+const APP_VERSION = '0.5.3';
 const API_BASE = 'https://candidate-watch-backend.onrender.com';
 const CW_REPO = 'https://raw.githubusercontent.com/bspencer413/candidate-watch-frontend/main';
 const SIGNIN_BG = CW_REPO + '/signin-background.jpg';
@@ -180,6 +180,53 @@ const fetchCongressLookup = async (office, state, district) => {
   } catch(e) { return null; }
 };
 
+// Detect a Wikipedia summary that's clearly a historical figure (not a current candidate).
+// Looks for a death year in the description like "(1782-1852)" or "(1782–1852)".
+const looksLikeHistoricalFigure = (wiki) => {
+  if (!wiki) return false;
+  const desc = wiki.description || '';
+  const m = desc.match(/(\d{4})\s*[-\u2013\u2014]\s*(\d{4})/);
+  if (!m) return false;
+  const deathYear = parseInt(m[2], 10);
+  const currentYear = new Date().getFullYear();
+  // Heuristic: a death year more than 10 years ago means we matched the wrong person
+  return (currentYear - deathYear) > 10;
+};
+
+// Fetch wiki for a known political candidate using opensearch with politician+state context.
+// This avoids the "Daniel Webster -> 1852 statesman" disambig trap.
+const fetchWikiForCandidate = async (name, state) => {
+  if (!name) return null;
+  const stateName = STATE_NAMES[(state || '').toUpperCase()] || state || '';
+  // Try a politician-disambiguated direct lookup first ("Daniel Webster (American politician)" exists)
+  const directVariants = [
+    name + ' (American politician)',
+    name + ' (politician)',
+  ];
+  for (let i = 0; i < directVariants.length; i++) {
+    try {
+      const sum = await (await fetch('https://en.wikipedia.org/api/rest_v1/page/summary/' + encodeURIComponent(directVariants[i]))).json();
+      if (sum && sum.title && sum.extract && sum.type !== 'disambiguation' && !looksLikeHistoricalFigure(sum)) return sum;
+    } catch(e) {}
+  }
+  // Fall back to opensearch with state context
+  const searchQuery = stateName ? (name + ' ' + stateName + ' politician') : (name + ' politician');
+  try {
+    const r = await fetch('https://en.wikipedia.org/w/api.php?action=opensearch&search=' + encodeURIComponent(searchQuery) + '&limit=3&namespace=0&format=json&origin=*');
+    const arr = await r.json();
+    if (arr && Array.isArray(arr) && arr[1] && arr[1].length > 0) {
+      for (let i = 0; i < arr[1].length; i++) {
+        const title = arr[1][i];
+        try {
+          const sum = await (await fetch('https://en.wikipedia.org/api/rest_v1/page/summary/' + encodeURIComponent(title))).json();
+          if (sum && sum.title && sum.extract && sum.type !== 'disambiguation' && !looksLikeHistoricalFigure(sum)) return sum;
+        } catch(e) {}
+      }
+    }
+  } catch(e) {}
+  return null;
+};
+
 // House district counts per state (119th Congress, post-2020 redistricting).
 // Updates only after each decennial census.
 const STATE_DISTRICTS = {
@@ -188,6 +235,18 @@ const STATE_DISTRICTS = {
   MA:9, MI:13, MN:8, MS:4, MO:8, MT:2, NE:3, NV:4, NH:2, NJ:12,
   NM:3, NY:26, NC:14, ND:1, OH:15, OK:5, OR:6, PA:17, RI:2, SC:7,
   SD:1, TN:9, TX:38, UT:4, VT:1, VA:11, WA:10, WV:2, WI:8, WY:1
+};
+const STATE_NAMES = {
+  AL:'Alabama', AK:'Alaska', AZ:'Arizona', AR:'Arkansas', CA:'California',
+  CO:'Colorado', CT:'Connecticut', DE:'Delaware', FL:'Florida', GA:'Georgia',
+  HI:'Hawaii', ID:'Idaho', IL:'Illinois', IN:'Indiana', IA:'Iowa',
+  KS:'Kansas', KY:'Kentucky', LA:'Louisiana', ME:'Maine', MD:'Maryland',
+  MA:'Massachusetts', MI:'Michigan', MN:'Minnesota', MS:'Mississippi', MO:'Missouri',
+  MT:'Montana', NE:'Nebraska', NV:'Nevada', NH:'New Hampshire', NJ:'New Jersey',
+  NM:'New Mexico', NY:'New York', NC:'North Carolina', ND:'North Dakota', OH:'Ohio',
+  OK:'Oklahoma', OR:'Oregon', PA:'Pennsylvania', RI:'Rhode Island', SC:'South Carolina',
+  SD:'South Dakota', TN:'Tennessee', TX:'Texas', UT:'Utah', VT:'Vermont',
+  VA:'Virginia', WA:'Washington', WV:'West Virginia', WI:'Wisconsin', WY:'Wyoming'
 };
 const districtsForState = (st) => {
   const n = STATE_DISTRICTS[(st || '').toUpperCase()];
@@ -610,13 +669,22 @@ function App() {
     const wakeTimer = setTimeout(() => setBackendWaking(true), 3000);
     try {
       const wikiQuery = hasName ? name : null;
-      const [wiki, candidates] = await Promise.all([
+      const [initialWiki, candidates] = await Promise.all([
         wikiQuery ? fetchWikiBio(wikiQuery).catch(() => null) : Promise.resolve(null),
         fetchFecSearch(hasName ? name : '', office, st || null, district || null).catch(() => [])
       ]);
       clearTimeout(wakeTimer); setBackendWaking(false);
       // Sort by cycle desc so current-cycle filings rank above old historical entries
       const sorted = (candidates || []).slice().sort((a, b) => (Number(b.cycle) || 0) - (Number(a.cycle) || 0));
+      // Wiki disambig fix: if FEC found a current candidate AND the initial wiki bio looks like
+      // a historical figure (e.g., "Daniel Webster" -> 1852 statesman), refetch wiki using the
+      // candidate's state + "politician" context.
+      let wiki = initialWiki;
+      if (hasName && sorted.length > 0 && (looksLikeHistoricalFigure(initialWiki) || !initialWiki)) {
+        const top = sorted[0];
+        const better = await fetchWikiForCandidate(name, top.state || st || null);
+        if (better) wiki = better;
+      }
       setSearchResults({ wiki, candidates: sorted, queryName: name || (st + (district ? '-' + district : '')) });
       setSearched(true);
       if (sorted.length === 1) setSelectedCand(sorted[0]);
@@ -637,11 +705,14 @@ function App() {
     setLoadingSave(true);
     try {
       const token = localStorage.getItem('token');
-      // Reuse the wiki bio fetched at search time when it has a thumbnail (already matched the right article).
-      // Fall back to a fresh lookup using FEC-derived name only if needed.
-      let wiki = (searchResults && searchResults.wiki && searchResults.wiki.thumbnail && searchResults.wiki.thumbnail.source)
+      // Reuse the wiki bio already on searchResults — it was disambig-corrected (politician+state context) at search time.
+      let wiki = (searchResults && searchResults.wiki && searchResults.wiki.thumbnail && searchResults.wiki.thumbnail.source && !looksLikeHistoricalFigure(searchResults.wiki))
         ? searchResults.wiki
         : null;
+      if (!wiki) {
+        // Politician-aware lookup using FEC state context (handles Webster/etc. without relying on search-time wiki)
+        wiki = await fetchWikiForCandidate(candName, cand.state).catch(() => null);
+      }
       if (!wiki) {
         wiki = await fetchWikiBio(fecNameToNatural(candName)).catch(() => null);
       }
@@ -896,8 +967,8 @@ function App() {
       <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100dvh', width: '100%', backgroundImage: 'url(' + SIGNIN_BG + ')', backgroundSize: 'cover', backgroundPosition: 'center', position: 'relative' }}>
         <div style={{ position: 'relative', zIndex: 2, display: 'flex', flexDirection: 'column', alignItems: 'stretch', flex: 1, justifyContent: 'center' }}>
           <div style={{ textAlign: 'center', padding: '2rem 1.5rem 1.5rem' }}>
-            <h1 style={{ color: '#fff', fontSize: isPhone ? '3.5rem' : '5.5rem', fontWeight: 900, fontFamily: 'var(--cw-display-font)', letterSpacing: '0.04em', lineHeight: 0.9, WebkitTextStroke: '2px #fff', textShadow: '0 4px 20px rgba(0,0,0,0.95), 0 2px 8px rgba(0,0,0,0.9)', margin: 0 }}>CANDIDATE<br/>WATCH</h1>
-            <p style={{ color: '#fff', fontSize: isPhone ? '1.7rem' : '2.1rem', fontWeight: 700, fontFamily: 'var(--cw-display-font)', letterSpacing: '0.04em', lineHeight: 1.2, textShadow: '0 3px 12px rgba(0,0,0,1), 0 1px 4px rgba(0,0,0,1)', marginTop: '1.25rem', padding: '0.6rem 1rem', backgroundColor: 'rgba(0,0,0,0.45)', borderRadius: '0.5rem', display: 'inline-block' }}>Track U.S. Senate<br/>and House Candidates</p>
+            <h1 style={{ color: '#fff', fontSize: isPhone ? '3.5rem' : '5.5rem', fontWeight: 900, fontFamily: 'var(--cw-display-font)', letterSpacing: '0.04em', lineHeight: 1.0, WebkitTextStroke: '2px #fff', textShadow: '0 4px 20px rgba(0,0,0,0.95), 0 2px 8px rgba(0,0,0,0.9)', margin: 0 }}>CANDIDATE<br/>WATCH</h1>
+            <p style={{ color: '#fff', fontSize: isPhone ? '1.7rem' : '2.1rem', fontWeight: 700, fontFamily: 'var(--cw-display-font)', letterSpacing: '0.04em', lineHeight: 1.2, textShadow: '0 3px 12px rgba(0,0,0,1), 0 1px 4px rgba(0,0,0,1)', marginTop: '1.25rem' }}>Track U.S. Senate<br/>and House Candidates</p>
           </div>
           <div style={{ paddingLeft: '1.5rem', paddingRight: '1.5rem' }}>
             <div className="rounded-2xl p-4 shadow-2xl space-y-3" style={{ backgroundColor: 'rgba(0,0,0,0.65)', backdropFilter: 'blur(8px)', borderColor: 'var(--cw-card-border)', borderWidth: '1px' }}>
@@ -1137,10 +1208,10 @@ function App() {
             <div className={cardClass} style={cardStyle}>
               <h3 className="text-white text-2xl font-bold mb-4 text-center" style={{ fontFamily: 'var(--cw-display-font)', letterSpacing: '0.05em', textTransform: 'uppercase' }}>How it works</h3>
               <div className="space-y-4">
-                <div className="flex gap-3 items-start"><span className="text-white text-2xl font-black w-7 shrink-0">1.</span><p className="text-gray-100 text-xl">Search by name. We pull bio from Wikipedia and live finance from the FEC.</p></div>
+                <div className="flex gap-3 items-start"><span className="text-white text-2xl font-black w-7 shrink-0">1.</span><p className="text-gray-100 text-xl">Search by name. We pull bio from Wikipedia, live finance from the FEC, and incumbent activity from Congress.gov.</p></div>
                 <div className="flex gap-3 items-start"><span className="text-white text-2xl font-black w-7 shrink-0">2.</span><p className="text-gray-100 text-xl">Save to Watchlist with one tap. We capture their current finances and start watching daily.</p></div>
-                <div className="flex gap-3 items-start"><span className="text-white text-2xl font-black w-7 shrink-0">3.</span><p className="text-gray-100 text-xl">Get alerts when something changes. Watchlist runs a daily background check -- new filings, fundraising shifts, sponsored bills -- and notifies you.</p></div>
-                <div className="flex gap-3 items-start"><span className="text-white text-2xl font-black w-7 shrink-0">4.</span><p className="text-gray-100 text-xl">Promote to My Candidates for your priority list. Every tap there pulls fresh data from FEC right now.</p></div>
+                <div className="flex gap-3 items-start"><span className="text-white text-2xl font-black w-7 shrink-0">3.</span><p className="text-gray-100 text-xl">Get alerts when something changes. Watchlist runs a daily background check across FEC and Congress.gov -- new filings, fundraising shifts, sponsored bills -- and notifies you.</p></div>
+                <div className="flex gap-3 items-start"><span className="text-white text-2xl font-black w-7 shrink-0">4.</span><p className="text-gray-100 text-xl">Promote to My Candidates for your priority list. Every tap there pulls fresh data from FEC and Congress.gov right now.</p></div>
               </div>
             </div>
             <div className={cardClass} style={cardStyle}>
