@@ -8,12 +8,12 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black">
   <meta name="apple-mobile-web-app-title" content="Candidate Watch">
   <title>Candidate Watch</title>
-  <meta name="description" content="Candidate Watch -- Track Senate candidates. Add any candidate to your watchlist. Get notified on new FEC filings, fundraising changes, and key votes.">
-  <meta name="keywords" content="candidate watch, FEC, Senate, election, campaign finance, congressional voting record">
+  <meta name="description" content="Candidate Watch -- Track U.S. Senate and House candidates. Add any candidate to your watchlist. Get notified on new FEC filings, fundraising changes, and key votes.">
+  <meta name="keywords" content="candidate watch, FEC, Senate, House, election, campaign finance, congressional voting record">
   <meta name="robots" content="index, follow">
   <meta name="author" content="Candidate Watch">
   <link rel="canonical" href="https://candidatewatch.app">
-  <meta property="og:title" content="Candidate Watch -- Track Senate Candidates.">
+  <meta property="og:title" content="Candidate Watch -- Track U.S. Senate and House Candidates.">
   <meta property="og:description" content="Add any candidate to your watchlist. Get notified on new filings and key votes.">
   <meta property="og:url" content="https://candidatewatch.app">
   <meta property="og:type" content="website">
@@ -69,13 +69,13 @@ const { useState, useEffect } = React;
 
 // == Constants ================================================================
 const APP_NAME = 'Candidate Watch';
-const APP_VERSION = '0.4.4';
+const APP_VERSION = '0.4.5';
 const API_BASE = 'https://candidate-watch-backend.onrender.com';
 const CW_REPO = 'https://raw.githubusercontent.com/bspencer413/candidate-watch-frontend/main';
 const SIGNIN_BG = CW_REPO + '/signin-background.jpg';
 const BILL_PHOTO = 'https://raw.githubusercontent.com/bspencer413/memorial-watch/main/Bill.jpeg';
 const TAGLINE = 'Who are you watching?';
-const TAGLINE_SUB = 'Track Senate candidates across the country';
+const TAGLINE_SUB = 'Track U.S. Senate and House candidates';
 
 const isPhone = window.innerWidth < 500;
 const isTablet = window.innerWidth >= 500 && window.innerWidth < 1024;
@@ -84,6 +84,8 @@ const PT = isPhone ? '36vh' : isTablet ? '40vh' : '38vh';
 // == Helpers ==================================================================
 const toTitleCase = (s) => s ? s.replace(/\w\S*/g, t => t.charAt(0).toUpperCase() + t.substr(1).toLowerCase()).replace(/'\w/g, t => t.toUpperCase()) : s;
 const smartTitleCase = (s) => s ? s.trim().replace(/\s+/g, ' ').split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ') : s;
+// Whitespace-preserving title case for use during live typing (does not collapse spaces or trim)
+const liveTitleCase = (s) => s ? s.replace(/(^|\s)([A-Za-z])/g, (m, ws, ch) => ws + ch.toUpperCase()) : s;
 // Convert FEC "LAST, FIRST [MIDDLE/SUFFIX]" to natural "First Last" for Wikipedia lookups
 const fecNameToNatural = (name) => {
   if (!name) return name;
@@ -197,9 +199,10 @@ const EyeIcon = () => (<svg className="w-5 h-5" fill="none" stroke="currentColor
 const EyeOffIcon = () => (<svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" /></svg>);
 
 // == Reusable bits ============================================================
-const ClearableInput = ({ value, onChange, onBlur, onKeyPress, placeholder, type='text', maxLength, inputClass }) => (
+const ClearableInput = ({ value, onChange, onBlur, onKeyPress, placeholder, type='text', maxLength, inputClass, spellCheck, autoCorrect, autoCapitalize }) => (
   <input type={type} value={value || ''} onChange={onChange} onBlur={onBlur} onKeyPress={onKeyPress}
-    placeholder={placeholder} maxLength={maxLength} className={inputClass} />
+    placeholder={placeholder} maxLength={maxLength} className={inputClass}
+    spellCheck={spellCheck} autoCorrect={autoCorrect} autoCapitalize={autoCapitalize} />
 );
 
 const CardPageHeader = ({ title, subtitle }) => (
@@ -790,7 +793,7 @@ function App() {
         <div style={{ position: 'relative', zIndex: 2, display: 'flex', flexDirection: 'column', alignItems: 'stretch', flex: 1, justifyContent: 'center' }}>
           <div style={{ textAlign: 'center', padding: '2rem 1.5rem 1.5rem' }}>
             <h1 style={{ color: '#fff', fontSize: isPhone ? '3.5rem' : '5.5rem', fontWeight: 900, fontFamily: 'var(--cw-display-font)', letterSpacing: '0.04em', lineHeight: 0.9, WebkitTextStroke: '2px #fff', textShadow: '0 4px 20px rgba(0,0,0,0.95), 0 2px 8px rgba(0,0,0,0.9)', margin: 0 }}>CANDIDATE<br/>WATCH</h1>
-            <p style={{ color: '#fff', fontSize: isPhone ? '1.7rem' : '2.1rem', fontWeight: 700, fontFamily: 'var(--cw-display-font)', letterSpacing: '0.04em', lineHeight: 1.2, textShadow: '0 3px 12px rgba(0,0,0,1), 0 1px 4px rgba(0,0,0,1)', marginTop: '1.25rem', padding: '0.6rem 1rem', backgroundColor: 'rgba(0,0,0,0.45)', borderRadius: '0.5rem', display: 'inline-block' }}>Track Senate Candidates<br/>Across the Country</p>
+            <p style={{ color: '#fff', fontSize: isPhone ? '1.7rem' : '2.1rem', fontWeight: 700, fontFamily: 'var(--cw-display-font)', letterSpacing: '0.04em', lineHeight: 1.2, textShadow: '0 3px 12px rgba(0,0,0,1), 0 1px 4px rgba(0,0,0,1)', marginTop: '1.25rem', padding: '0.6rem 1rem', backgroundColor: 'rgba(0,0,0,0.45)', borderRadius: '0.5rem', display: 'inline-block' }}>Track U.S. Senate<br/>and House Candidates</p>
           </div>
           <div style={{ paddingLeft: '1.5rem', paddingRight: '1.5rem' }}>
             <div className="rounded-2xl p-4 shadow-2xl space-y-3" style={{ backgroundColor: 'rgba(0,0,0,0.65)', backdropFilter: 'blur(8px)', borderColor: 'var(--cw-card-border)', borderWidth: '1px' }}>
@@ -831,12 +834,12 @@ function App() {
               {searching && backendWaking && <p className="text-white/60 text-center pb-2 animate-pulse text-lg">Waking up the server...</p>}
               {!searched ? (
                 <div className="space-y-2">
-                  <ClearableInput value={searchName} onChange={(e) => setSearchName(e.target.value)} onBlur={(e) => setSearchName(smartTitleCase(e.target.value.trim()))} onKeyPress={(e) => e.key === 'Enter' && doSearch()} placeholder="First and last name (e.g., Thom Tillis)" inputClass={iClass} />
+                  <ClearableInput value={searchName} onChange={(e) => setSearchName(liveTitleCase(e.target.value))} onKeyPress={(e) => e.key === 'Enter' && doSearch()} placeholder="First and last name" inputClass={iClass} spellCheck={false} autoCorrect="off" autoCapitalize="words" />
                   <ClearableInput value={searchState} onChange={(e) => setSearchState(e.target.value.toUpperCase().slice(0,2))} onKeyPress={(e) => e.key === 'Enter' && doSearch()} placeholder="State (optional, e.g. TX)" maxLength={2} inputClass={iClass} />
                   <button onClick={doSearch} disabled={searching} className="w-full py-3 text-white rounded-lg flex items-center justify-center gap-2 disabled:opacity-50 text-2xl font-bold" style={{ backgroundColor: 'var(--cw-accent)' }}>
                     <SearchIcon /> {searching ? 'Searching...' : 'Find Candidate'}
                   </button>
-                  <p className="text-gray-300 text-sm text-center">Senate candidates, current cycle. Source: Federal Election Commission.</p>
+                  <p className="text-gray-300 text-sm text-center">U.S. Senate and House candidates, current cycle. Source: Federal Election Commission.</p>
                 </div>
               ) : (<SearchResultView />)}
             </div>
@@ -970,7 +973,7 @@ function App() {
                 <h2 className="text-4xl font-black text-white" style={{ fontFamily: 'var(--cw-display-font)', letterSpacing: '0.06em', textTransform: 'uppercase', WebkitTextStroke: '1px #fff' }}>About</h2>
                 <h2 className="text-4xl font-black text-white" style={{ fontFamily: 'var(--cw-display-font)', letterSpacing: '0.06em', textTransform: 'uppercase', WebkitTextStroke: '1px #fff' }}>{APP_NAME}</h2>
               </div>
-              <p className="text-white/80 italic text-xl text-center mb-3">v{APP_VERSION}</p>
+              <p className="text-white/80 italic text-xl text-center mb-3">app v{APP_VERSION} &nbsp;&middot;&nbsp; api v{apiVersion}</p>
               <div className="flex items-center gap-4 mb-4">
                 <img src={BILL_PHOTO} alt="Bill Spencer" className="w-14 h-14 rounded-full object-cover border-2 border-white/30 shrink-0" />
                 <div>
@@ -981,8 +984,8 @@ function App() {
               </div>
               <p className="text-white text-2xl font-bold italic mb-3">{TAGLINE}</p>
               <div className="space-y-3 text-gray-100 text-xl leading-relaxed">
-                <p>The Senate candidates you care about, all in one place.</p>
-                <p>Add anyone running for U.S. Senate to your watchlist. Candidate Watch tracks the things that matter -- new FEC filings, fundraising changes, sponsored bills, key votes -- and tells you when something changes.</p>
+                <p>The U.S. Senate and House candidates you care about, all in one place.</p>
+                <p>Add anyone running for U.S. Senate or House to your watchlist. Candidate Watch tracks the things that matter -- new FEC filings, fundraising changes, sponsored bills, key votes -- and tells you when something changes.</p>
                 <p>Just the facts. No polls. No predictions. No partisan spin.</p>
               </div>
             </div>
