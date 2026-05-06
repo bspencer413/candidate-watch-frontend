@@ -69,7 +69,7 @@ const { useState, useEffect } = React;
 
 // == Constants ================================================================
 const APP_NAME = 'Candidate Watch';
-const APP_VERSION = '0.4.5';
+const APP_VERSION = '0.5.0';
 const API_BASE = 'https://candidate-watch-backend.onrender.com';
 const CW_REPO = 'https://raw.githubusercontent.com/bspencer413/candidate-watch-frontend/main';
 const SIGNIN_BG = CW_REPO + '/signin-background.jpg';
@@ -139,10 +139,14 @@ const snapshotChanged = (oldSnap, newSnap) => {
 };
 
 // == API fetchers =============================================================
-const fetchFecSearch = async (name, office, state) => {
+const fetchFecSearch = async (name, office, state, district) => {
   try {
-    let url = API_BASE + '/fec/search?name=' + encodeURIComponent(name) + '&office=' + encodeURIComponent(office || 'S');
-    if (state) url += '&state=' + encodeURIComponent(state);
+    const params = [];
+    params.push('office=' + encodeURIComponent(office || 'S'));
+    if (name && name.trim()) params.push('name=' + encodeURIComponent(name.trim()));
+    if (state) params.push('state=' + encodeURIComponent(state));
+    if (district) params.push('district=' + encodeURIComponent(district));
+    const url = API_BASE + '/fec/search?' + params.join('&');
     const r = await fetch(url);
     if (!r.ok) return [];
     const data = await r.json();
@@ -165,6 +169,55 @@ const fetchCongressMember = async (bioguideId) => {
     return await r.json();
   } catch(e) { return null; }
 };
+
+// House district counts per state (119th Congress, post-2020 redistricting).
+// Updates only after each decennial census.
+const STATE_DISTRICTS = {
+  AL:7, AK:1, AZ:9, AR:4, CA:52, CO:8, CT:5, DE:1, FL:28, GA:14,
+  HI:2, ID:2, IL:17, IN:9, IA:4, KS:4, KY:6, LA:6, ME:2, MD:8,
+  MA:9, MI:13, MN:8, MS:4, MO:8, MT:2, NE:3, NV:4, NH:2, NJ:12,
+  NM:3, NY:26, NC:14, ND:1, OH:15, OK:5, OR:6, PA:17, RI:2, SC:7,
+  SD:1, TN:9, TX:38, UT:4, VT:1, VA:11, WA:10, WV:2, WI:8, WY:1
+};
+const districtsForState = (st) => {
+  const n = STATE_DISTRICTS[(st || '').toUpperCase()];
+  if (!n) return [];
+  if (n === 1) return ['00']; // at-large
+  const out = [];
+  for (let i = 1; i <= n; i++) out.push(i < 10 ? ('0' + i) : String(i));
+  return out;
+};
+
+// Census Geocoder: address (or address-like ZIP/city) -> {state, district}
+const geocodeToDistrict = async (address) => {
+  if (!address || !address.trim()) return null;
+  try {
+    const url = 'https://geocoding.geo.census.gov/geocoder/geographies/onelineaddress'
+              + '?address=' + encodeURIComponent(address.trim())
+              + '&benchmark=Public_AR_Current&vintage=Current_Current'
+              + '&layers=Congressional+Districts&format=json';
+    const r = await fetch(url);
+    if (!r.ok) return null;
+    const data = await r.json();
+    const matches = (data && data.result && data.result.addressMatches) || [];
+    if (matches.length === 0) return null;
+    const m = matches[0];
+    const state = m.addressComponents && m.addressComponents.state;
+    // Layer name varies by vintage; find any key that mentions "Congressional"
+    const geo = m.geographies || {};
+    let cdRows = null;
+    Object.keys(geo).forEach(k => {
+      if (!cdRows && /congressional/i.test(k)) cdRows = geo[k];
+    });
+    if (!state || !cdRows || cdRows.length === 0) return null;
+    const row = cdRows[0];
+    const dist = row.BASENAME || row.CD || row.DISTRICT;
+    if (!dist) return null;
+    const padded = String(dist).padStart(2, '0');
+    return { state: state.toUpperCase(), district: padded };
+  } catch(e) { return null; }
+};
+
 
 const fetchWikiBio = async (name) => {
   if (!name) return null;
@@ -383,6 +436,11 @@ function App() {
   const [showPassword, setShowPassword] = useState(false);
   const [searchName, setSearchName] = useState('');
   const [searchState, setSearchState] = useState('');
+  const [searchOffice, setSearchOffice] = useState('S');
+  const [searchAddress, setSearchAddress] = useState('');
+  const [searchDistrict, setSearchDistrict] = useState('');
+  const [geocoding, setGeocoding] = useState(false);
+  const [geocodeMsg, setGeocodeMsg] = useState('');
   const [showDangerZone, setShowDangerZone] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [drawerData, setDrawerData] = useState(null);
@@ -509,26 +567,49 @@ function App() {
       doLogout(); alert('Your account has been permanently deleted.');
     } catch (error) { alert('Error: ' + error.message); }
   };
-  const clearSearch = () => { setSearchResults(null); setSearched(false); setSelectedCand(null); setSearchName(''); setSearchState(''); };
+  const clearSearch = () => { setSearchResults(null); setSearched(false); setSelectedCand(null); setSearchName(''); setSearchState(''); setSearchAddress(''); setSearchDistrict(''); setGeocodeMsg(''); };
   const isOnList = (name) => { if (!name) return false; const lower = name.trim().toLowerCase(); return !!watchlist.find(w => w && w.name && w.name.trim().toLowerCase() === lower); };
   const parseMeta = (locationField) => { if (!locationField) return null; try { return JSON.parse(locationField); } catch(e) { return null; } };
+
+  const doGeocode = async () => {
+    if (!searchAddress.trim()) { setGeocodeMsg('Enter an address or ZIP first.'); return; }
+    setGeocoding(true); setGeocodeMsg('Looking up district...');
+    const r = await geocodeToDistrict(searchAddress);
+    setGeocoding(false);
+    if (!r) { setGeocodeMsg('Could not resolve to a district. Try a full street address, or use the State + District picker below.'); return; }
+    setSearchState(r.state);
+    setSearchDistrict(r.district);
+    setGeocodeMsg('Found ' + r.state + '-' + r.district.replace(/^0+/, '').padStart(r.district === '00' ? 2 : 1, '0'));
+  };
 
   const doSearch = async () => {
     if (document.activeElement) document.activeElement.blur();
     const name = smartTitleCase((searchName || '').trim().replace(/\s+/g, ' '));
-    if (!name || name.length < 2) { alert('Please enter a candidate name.'); return; }
+    const office = searchOffice || 'S';
+    const st = (searchState || '').trim().toUpperCase().slice(0, 2);
+    const district = office === 'H' ? (searchDistrict || '').trim() : '';
+    const hasName = !!(name && name.length >= 2);
+    const hasDistrict = office === 'H' && !!st && !!district;
+    if (!hasName && !hasDistrict) {
+      alert(office === 'H'
+        ? 'Enter a name, or pick a state and district (or look up by address/ZIP).'
+        : 'Please enter a candidate name.');
+      return;
+    }
     setSearching(true); setSearchResults(null); setSelectedCand(null); setBackendWaking(false);
     const wakeTimer = setTimeout(() => setBackendWaking(true), 3000);
     try {
-      const st = (searchState || '').trim().toUpperCase().slice(0, 2);
+      const wikiQuery = hasName ? name : null;
       const [wiki, candidates] = await Promise.all([
-        fetchWikiBio(name).catch(() => null),
-        fetchFecSearch(name, 'S', st || null).catch(() => [])
+        wikiQuery ? fetchWikiBio(wikiQuery).catch(() => null) : Promise.resolve(null),
+        fetchFecSearch(hasName ? name : '', office, st || null, district || null).catch(() => [])
       ]);
       clearTimeout(wakeTimer); setBackendWaking(false);
-      setSearchResults({ wiki, candidates, queryName: name });
+      // Sort by cycle desc so current-cycle filings rank above old historical entries
+      const sorted = (candidates || []).slice().sort((a, b) => (Number(b.cycle) || 0) - (Number(a.cycle) || 0));
+      setSearchResults({ wiki, candidates: sorted, queryName: name || (st + (district ? '-' + district : '')) });
       setSearched(true);
-      if (candidates.length === 1) setSelectedCand(candidates[0]);
+      if (sorted.length === 1) setSelectedCand(sorted[0]);
     } catch(e) {
       clearTimeout(wakeTimer); setBackendWaking(false);
       setSearchResults({ wiki: null, candidates: [], queryName: name });
@@ -699,6 +780,7 @@ function App() {
             <p className="text-white/90 text-xl">
               <span style={{ display: 'inline-block', backgroundColor: pColor, color: '#fff', padding: '0 0.5rem', borderRadius: '0.25rem', marginRight: '0.5rem', fontWeight: 700 }}>{pAbbr || '?'}</span>
               {officeLabel(candidate.office, candidate.state, candidate.district)}
+              {candidate.cycle && <span className="text-white/60"> · {candidate.cycle}</span>}
             </p>
           )}
         </div>
@@ -833,9 +915,49 @@ function App() {
               {searching && <p className="text-white text-center py-4 animate-pulse text-xl">Searching FEC...</p>}
               {searching && backendWaking && <p className="text-white/60 text-center pb-2 animate-pulse text-lg">Waking up the server...</p>}
               {!searched ? (
-                <div className="space-y-2">
-                  <ClearableInput value={searchName} onChange={(e) => setSearchName(liveTitleCase(e.target.value))} onKeyPress={(e) => e.key === 'Enter' && doSearch()} placeholder="First and last name" inputClass={iClass} spellCheck={false} autoCorrect="off" autoCapitalize="words" />
-                  <ClearableInput value={searchState} onChange={(e) => setSearchState(e.target.value.toUpperCase().slice(0,2))} onKeyPress={(e) => e.key === 'Enter' && doSearch()} placeholder="State (optional, e.g. TX)" maxLength={2} inputClass={iClass} />
+                <div className="space-y-3">
+                  {/* Office toggle */}
+                  <div className="flex gap-2 p-1 rounded-lg" style={{ backgroundColor: 'rgba(0,0,0,0.35)' }}>
+                    <button
+                      onClick={() => setSearchOffice('S')}
+                      className={'flex-1 py-2 rounded-md text-xl font-bold transition-colors ' + (searchOffice === 'S' ? 'text-white' : 'text-white/60')}
+                      style={{ backgroundColor: searchOffice === 'S' ? 'var(--cw-accent)' : 'transparent' }}
+                    >Senate</button>
+                    <button
+                      onClick={() => setSearchOffice('H')}
+                      className={'flex-1 py-2 rounded-md text-xl font-bold transition-colors ' + (searchOffice === 'H' ? 'text-white' : 'text-white/60')}
+                      style={{ backgroundColor: searchOffice === 'H' ? 'var(--cw-accent)' : 'transparent' }}
+                    >House</button>
+                  </div>
+
+                  <ClearableInput value={searchName} onChange={(e) => setSearchName(liveTitleCase(e.target.value))} onKeyPress={(e) => e.key === 'Enter' && doSearch()} placeholder={searchOffice === 'H' ? 'First and last name (optional)' : 'First and last name'} inputClass={iClass} spellCheck={false} autoCorrect="off" autoCapitalize="words" />
+
+                  {searchOffice === 'S' && (
+                    <ClearableInput value={searchState} onChange={(e) => setSearchState(e.target.value.toUpperCase().slice(0,2))} onKeyPress={(e) => e.key === 'Enter' && doSearch()} placeholder="State (optional, e.g. TX)" maxLength={2} inputClass={iClass} spellCheck={false} autoCorrect="off" autoCapitalize="characters" />
+                  )}
+
+                  {searchOffice === 'H' && (
+                    <div className="space-y-2 rounded-lg p-3" style={{ backgroundColor: 'rgba(0,0,0,0.25)' }}>
+                      <p className="text-white/80 text-base">Find your district</p>
+                      <ClearableInput value={searchAddress} onChange={(e) => setSearchAddress(e.target.value)} onKeyPress={(e) => e.key === 'Enter' && doGeocode()} placeholder="Address or ZIP" inputClass={iClass} spellCheck={false} autoCorrect="off" />
+                      <button onClick={doGeocode} disabled={geocoding || !searchAddress.trim()} className="w-full py-2 text-white rounded-lg disabled:opacity-50 text-lg font-bold" style={{ backgroundColor: 'rgba(255,255,255,0.15)' }}>
+                        {geocoding ? 'Looking up...' : 'Look up district'}
+                      </button>
+                      {geocodeMsg && <p className="text-yellow-200 text-base">{geocodeMsg}</p>}
+                      <p className="text-white/60 text-sm text-center">— or pick manually —</p>
+                      <div className="flex gap-2">
+                        <select value={searchState} onChange={(e) => { setSearchState(e.target.value); setSearchDistrict(''); }} className={iClass} style={{ flex: 1 }}>
+                          <option value="">State</option>
+                          {Object.keys(STATE_DISTRICTS).sort().map(s => <option key={s} value={s}>{s}</option>)}
+                        </select>
+                        <select value={searchDistrict} onChange={(e) => setSearchDistrict(e.target.value)} className={iClass} style={{ flex: 1 }} disabled={!searchState}>
+                          <option value="">District</option>
+                          {districtsForState(searchState).map(d => <option key={d} value={d}>{d === '00' ? 'At-large' : d.replace(/^0+/, '') || d}</option>)}
+                        </select>
+                      </div>
+                    </div>
+                  )}
+
                   <button onClick={doSearch} disabled={searching} className="w-full py-3 text-white rounded-lg flex items-center justify-center gap-2 disabled:opacity-50 text-2xl font-bold" style={{ backgroundColor: 'var(--cw-accent)' }}>
                     <SearchIcon /> {searching ? 'Searching...' : 'Find Candidate'}
                   </button>
@@ -1064,7 +1186,7 @@ function App() {
                     </div>
                     <div className="flex-1 min-w-0">
                       <p className="text-white text-2xl font-bold truncate">{c.name}</p>
-                      <p className="text-white/70 text-xl truncate">{officeLabel(c.office, c.state, c.district)}</p>
+                      <p className="text-white/70 text-xl truncate">{officeLabel(c.office, c.state, c.district)}{c.cycle ? ' · ' + c.cycle : ''}</p>
                       {c.incumbent_challenge && <p className="text-white/50 text-base uppercase">{c.incumbent_challenge}</p>}
                     </div>
                   </div>
