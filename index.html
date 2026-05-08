@@ -69,7 +69,7 @@ const { useState, useEffect } = React;
 
 // == Constants ================================================================
 const APP_NAME = 'Candidate Watch';
-const APP_VERSION = '0.5.4';
+const APP_VERSION = '0.5.5';
 const API_BASE = 'https://candidate-watch-backend.onrender.com';
 const CW_REPO = 'https://raw.githubusercontent.com/bspencer413/candidate-watch-frontend/main';
 const SIGNIN_BG = CW_REPO + '/signin-background.jpg';
@@ -1228,6 +1228,17 @@ function App() {
                 <a href="mailto:hello@candidatewatch.app" className="text-white/80 text-xl">hello@candidatewatch.app</a>
               </div>
             </div>
+            {/* Try our other Watchlist apps */}
+            <div className={cardClass} style={cardStyle}>
+              <h3 className="font-bold text-white mb-3 text-center text-2xl" style={{ fontFamily: 'var(--cw-display-font)', letterSpacing: '0.05em', textTransform: 'uppercase' }}>Try our other Watchlist apps</h3>
+              <div className="space-y-3">
+                <a href="https://3brains.app" target="_blank" rel="noopener noreferrer"
+                  className="block w-full py-4 text-white text-center rounded-xl text-xl font-semibold"
+                  style={{ backgroundColor: 'var(--cw-accent)' }}>
+                  Visit Our Site
+                </a>
+              </div>
+            </div>
             <div className="px-1 space-y-3 pb-2">
               <div className="p-3 bg-black/40 rounded-xl"><p className="font-medium text-white text-xl text-center">{user && user.email}</p></div>
               <button onClick={doLogout} className="w-full py-4 text-white rounded-xl text-2xl font-bold" style={{ backgroundColor: 'var(--cw-accent)' }}>Sign Out</button>
@@ -1312,5 +1323,9 @@ function App() {
 
 ReactDOM.render(React.createElement(App), document.getElementById('root'));
 </script>
+<script>
+  window.va = window.va || function () { (window.vaq = window.vaq || []).push(arguments); };
+</script>
+<script defer src="/_vercel/insights/script.js"></script>
 </body>
 </html>
