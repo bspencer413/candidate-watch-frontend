@@ -1111,7 +1111,6 @@ function App() {
     // eslint-disable-next-line
   }, [watchlist]);
 
-  const loadWatchlist = async () => {
   // Backwards-compat alias -- watchlist loading is owned by AuthGate.
   const loadWatchlist = () => gate.refreshList();
   const loadNotifications = async () => {
