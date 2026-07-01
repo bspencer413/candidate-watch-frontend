@@ -71,7 +71,7 @@ const { useState, useEffect } = React;
 
 // == Constants ================================================================
 const APP_NAME = 'Candidate Watch';
-const APP_VERSION = '0.5.9';
+const APP_VERSION = '0.6.0';
 const API_BASE = 'https://candidate-watch-backend.onrender.com';
 const CW_REPO = 'https://raw.githubusercontent.com/bspencer413/candidate-watch-frontend/main';
 const SIGNIN_BG = CW_REPO + '/signin-background.jpg';
@@ -1402,6 +1402,16 @@ function App() {
   // Promote a watchlist item to My Candidates
   const promoteToMyCandidates = async () => {
     if (!drawerData || !drawerData.watchlistId) return;
+    // v0.6.0: My Candidates is a signed-in feature (needs a real server record
+    // + token). Anon users have neither, so promoting sent "Bearer null" and
+    // errored. Prompt signup instead. After signup their watchlist migrates to
+    // the server; the drawer closes and they land back on Watchlist, where they
+    // can re-tap Save to My Candidates on the now-server item.
+    if (!gate.isAuthed) {
+      setDrawerData(null);
+      gate.openSignup('Create a free account to build your My Candidates list.');
+      return;
+    }
     try {
       const token = gate.getToken();
       const r = await fetch(API_BASE + '/watchlist/' + drawerData.watchlistId + '/promote', {
