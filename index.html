@@ -71,7 +71,7 @@ const { useState, useEffect } = React;
 
 // == Constants ================================================================
 const APP_NAME = 'Candidate Watch';
-const APP_VERSION = '0.6.0';
+const APP_VERSION = '0.6.1';
 const API_BASE = 'https://candidate-watch-backend.onrender.com';
 const CW_REPO = 'https://raw.githubusercontent.com/bspencer413/candidate-watch-frontend/main';
 const SIGNIN_BG = CW_REPO + '/signin-background.jpg';
@@ -84,7 +84,7 @@ const isTablet = window.innerWidth >= 500 && window.innerWidth < 1024;
 const PT = isPhone ? '36vh' : isTablet ? '40vh' : '38vh';
 
 // ============================================================================
-// AuthGate v0.3.3 — 3Brains portable account + anonymous-storage component
+// AuthGate v0.3.4 — 3Brains portable account + anonymous-storage component
 // ============================================================================
 //
 // PURPOSE
@@ -149,6 +149,16 @@ const AUTH_GATE_CONFIG = {
   loginEndpoint: '/auth/login',
   registerEndpoint: '/auth/register',
   freeAnonLimit: 5,
+  promoteField: 'in_my_candidates',
+  serverPromote: function(id, saved, token) {
+    // Candidate promote is one-way (POST /promote). Unpromote isn't supported
+    // server-side, so saved=false is a no-op.
+    if (!saved) return Promise.resolve({ ok: true });
+    return fetch(API_BASE + '/watchlist/' + id + '/promote', {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + token }
+    });
+  },
   appName: 'Candidate Watch',
   saveActionLabel: 'save this candidate',
   itemNoun: 'candidates',
@@ -302,6 +312,12 @@ function useAuthGate(config) {
         const payload = Object.assign({}, anonItem);
         delete payload.id;
         const created = await serverAdd(payload);
+        try {
+          if (config.promoteField && anonItem[config.promoteField]
+              && typeof config.serverPromote === 'function') {
+            await config.serverPromote(created.id, true, readToken());
+          }
+        } catch (e) {}
         // Remap snapshot key if it exists under the temp anon ID
         try {
           const oldKey = config.anonSnapshotPrefix + anonItem.id;
@@ -408,6 +424,27 @@ function useAuthGate(config) {
     setPendingAction({ type: 'callback', fn: callback });
     openSignup('Sign up to ' + config.saveActionLabel + '.');
     return false;
+  };
+
+  const promote = async (id, saved) => {
+    const val = (saved === undefined) ? true : saved;
+    if (isAuthed) {
+      if (typeof config.serverPromote === 'function') {
+        const r = await config.serverPromote(id, val, readToken());
+        if (r && r.ok) await refreshList();
+      }
+      return;
+    }
+    if (!config.promoteField) return;
+    const current = readAnonList();
+    const updated = current.map(function(it) {
+      if (it.id !== id) return it;
+      const c = Object.assign({}, it);
+      c[config.promoteField] = val;
+      return c;
+    });
+    writeAnonList(updated);
+    setList(updated);
   };
 
   // -- Modal submit (calls login or register against backend)
@@ -659,6 +696,7 @@ function useAuthGate(config) {
     remove: remove,
     refreshList: refreshList,
     getToken: readToken,               // v0.3.2: host token reads route here (dual-storage safe)
+    promote: promote,
     requireAuth: requireAuth,
     openSignup: openSignup,
     openSignin: openSignin,
@@ -669,7 +707,7 @@ function useAuthGate(config) {
   };
 }
 
-// === END AuthGate v0.3.3 ======================================================
+// === END AuthGate v0.3.4 ======================================================
 
 
 // == Helpers ==================================================================
@@ -1402,30 +1440,12 @@ function App() {
   // Promote a watchlist item to My Candidates
   const promoteToMyCandidates = async () => {
     if (!drawerData || !drawerData.watchlistId) return;
-    // v0.6.0: My Candidates is a signed-in feature (needs a real server record
-    // + token). Anon users have neither, so promoting sent "Bearer null" and
-    // errored. Prompt signup instead. After signup their watchlist migrates to
-    // the server; the drawer closes and they land back on Watchlist, where they
-    // can re-tap Save to My Candidates on the now-server item.
-    if (!gate.isAuthed) {
-      setDrawerData(null);
-      gate.openSignup('Create a free account to build your My Candidates list.');
-      return;
-    }
-    try {
-      const token = gate.getToken();
-      const r = await fetch(API_BASE + '/watchlist/' + drawerData.watchlistId + '/promote', {
-        method: 'POST',
-        headers: { 'Authorization': 'Bearer ' + token }
-      });
-      if (!r.ok) throw new Error('Failed');
-      // Refresh from server so the in_my_candidates flag is picked up
-      await gate.refreshList();
-      // Close drawer and navigate to My Candidates page (matches MW/DORA/PW flow)
-      setDrawerData(null);
-      setPage('mycandidates');
-      showToast('Saved to My Candidates');
-    } catch(e) { alert('Error: ' + e.message); }
+    // v0.3.4: anon-allowed. gate.promote flags the item locally for anon (and
+    // migrates it on signup) or POSTs /promote when signed in.
+    await gate.promote(drawerData.watchlistId, true);
+    setDrawerData(null);
+    setPage('mycandidates');
+    showToast('Saved to My Candidates');
   };
 
   const unreadCount = notifications.length;
